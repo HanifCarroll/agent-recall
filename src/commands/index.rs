@@ -1,8 +1,9 @@
 use crate::config::{default_db_path, default_source_roots};
 use crate::indexer::index_sources_with_progress;
 use crate::output::progress_line;
+use crate::refresh_lock::{acquire_refresh_lock, refresh_lock_wait_timeout};
 use crate::store::Store;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Args;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,9 @@ pub struct RebuildArgs {
 pub fn run_index(args: IndexArgs) -> Result<()> {
     let db_path = args.db.unwrap_or(default_db_path()?);
     let sources = resolve_sources(args.sources)?;
+    let Some(_refresh_lock) = acquire_refresh_lock(&db_path, refresh_lock_wait_timeout())? else {
+        return Err(anyhow!("another codex-recall refresh is already active"));
+    };
     let store = Store::open(&db_path)?;
     let started = Instant::now();
     let report = index_sources_with_progress(&store, &sources, |report| {
@@ -51,6 +55,9 @@ pub fn run_index(args: IndexArgs) -> Result<()> {
 pub fn run_rebuild(args: RebuildArgs) -> Result<()> {
     let db_path = args.db.unwrap_or(default_db_path()?);
     let sources = resolve_sources(args.sources)?;
+    let Some(_refresh_lock) = acquire_refresh_lock(&db_path, refresh_lock_wait_timeout())? else {
+        return Err(anyhow!("another codex-recall refresh is already active"));
+    };
     remove_db_files(&db_path)?;
     let store = Store::open(&db_path)?;
     let started = Instant::now();

@@ -1769,6 +1769,104 @@ fn status_json_reports_using_stale_index_after_lock_failure() {
 }
 
 #[test]
+fn status_json_reports_refreshing_when_refresh_lock_is_active() {
+    let temp = temp_dir("status-refreshing");
+    let source = temp.join("sessions");
+    let db = temp.join("index.sqlite");
+    let state = temp.join("watch-state.json");
+    write_session_file(
+        &source,
+        "old.jsonl",
+        "old-session",
+        "/Users/me/project",
+        "2026-04-13T01:00:00Z",
+        "The old indexed session remains available.",
+    );
+    index_sources(&db, &[&source]);
+    write_session_file(
+        &source,
+        "new.jsonl",
+        "new-session",
+        "/Users/me/project",
+        "2026-04-13T02:00:00Z",
+        "The new pending session should wait for the active refresh.",
+    );
+    let lock_path = PathBuf::from(format!("{}.refresh.lock", db.display()));
+    fs::write(
+        &lock_path,
+        format!("pid={}\ncreated_at=test\n", std::process::id()),
+    )
+    .unwrap();
+
+    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "0")
+        .args(["status", "--json", "--db"])
+        .arg(&db)
+        .args(["--state"])
+        .arg(&state)
+        .args(["--source"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "status failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(json["freshness"], "refreshing");
+    assert!(json["freshness_message"]
+        .as_str()
+        .unwrap()
+        .contains("current index remains usable"));
+    assert_eq!(json["pending_files"], 1);
+    assert_eq!(json["refresh_lock"]["exists"], true);
+    assert_eq!(json["refresh_lock"]["active"], true);
+    assert_eq!(json["refresh_lock"]["stale"], false);
+    assert_eq!(
+        json["refresh_lock"]["pid"],
+        serde_json::json!(std::process::id())
+    );
+    assert_eq!(json["refresh_lock"]["owner_alive"], true);
+}
+
+#[test]
+fn status_json_does_not_report_refreshing_for_stale_refresh_lock() {
+    let temp = temp_dir("status-stale-refresh-lock");
+    let source = temp.join("sessions");
+    let db = temp.join("index.sqlite");
+    let state = temp.join("watch-state.json");
+    write_sample_session(&source);
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    fs::write(format!("{}.refresh.lock", db.display()), "active refresh\n").unwrap();
+
+    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "0")
+        .args(["status", "--json", "--db"])
+        .arg(&db)
+        .args(["--state"])
+        .arg(&state)
+        .args(["--source"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "status failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(json["freshness"], "stale");
+    assert!(json["freshness_message"]
+        .as_str()
+        .unwrap()
+        .contains("refresh lock appears stale"));
+    assert_eq!(json["refresh_lock"]["exists"], true);
+    assert_eq!(json["refresh_lock"]["active"], false);
+    assert_eq!(json["refresh_lock"]["stale"], true);
+}
+
+#[test]
 fn watch_once_uses_stale_index_when_refresh_database_is_locked() {
     let temp = temp_dir("watch-stale-lock");
     let source = temp.join("sessions");
@@ -1850,6 +1948,104 @@ fn watch_once_uses_stale_index_when_refresh_database_is_locked() {
     assert!(new_search.status.success());
     let stdout = String::from_utf8_lossy(&new_search.stdout);
     assert!(stdout.contains("no matches"), "{stdout}");
+}
+
+#[test]
+fn watch_once_uses_current_index_when_refresh_lock_is_busy() {
+    let temp = temp_dir("watch-refresh-lock-busy");
+    let source = temp.join("sessions");
+    let db = temp.join("index.sqlite");
+    let state = temp.join("watch-state.json");
+    write_session_file(
+        &source,
+        "old.jsonl",
+        "old-session",
+        "/Users/me/project",
+        "2026-04-13T01:00:00Z",
+        "The old indexed session remains available.",
+    );
+    index_sources(&db, &[&source]);
+    write_session_file(
+        &source,
+        "new.jsonl",
+        "new-session",
+        "/Users/me/project",
+        "2026-04-13T02:00:00Z",
+        "The new pending session should wait for the active refresh.",
+    );
+    fs::write(format!("{}.refresh.lock", db.display()), "active refresh").unwrap();
+
+    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+        .env("CODEX_RECALL_REFRESH_LOCK_WAIT_MS", "1")
+        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "600000")
+        .args(["watch", "--once", "--quiet-for", "0", "--db"])
+        .arg(&db)
+        .args(["--state"])
+        .arg(&state)
+        .args(["--source"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        watch.status.success(),
+        "watch failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&watch.stdout),
+        String::from_utf8_lossy(&watch.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&watch.stdout);
+    assert!(
+        stdout.contains("another refresh is already active"),
+        "{stdout}"
+    );
+
+    let new_search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+        .args(["search", "new pending", "--db"])
+        .arg(&db)
+        .output()
+        .unwrap();
+    assert!(new_search.status.success());
+    assert!(
+        String::from_utf8_lossy(&new_search.stdout).contains("no matches"),
+        "{}",
+        String::from_utf8_lossy(&new_search.stdout)
+    );
+}
+
+#[test]
+fn watch_once_waits_for_refresh_lock_then_indexes() {
+    let temp = temp_dir("watch-refresh-lock-waits");
+    let source = temp.join("sessions");
+    let db = temp.join("index.sqlite");
+    let state = temp.join("watch-state.json");
+    write_sample_session(&source);
+    let lock_path = PathBuf::from(format!("{}.refresh.lock", db.display()));
+    fs::write(&lock_path, "active refresh").unwrap();
+    let lock_to_remove = lock_path.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(150));
+        let _ = fs::remove_file(lock_to_remove);
+    });
+
+    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+        .env("CODEX_RECALL_REFRESH_LOCK_WAIT_MS", "2000")
+        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "600000")
+        .args(["watch", "--once", "--quiet-for", "0", "--db"])
+        .arg(&db)
+        .args(["--state"])
+        .arg(&state)
+        .args(["--source"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        watch.status.success(),
+        "watch failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&watch.stdout),
+        String::from_utf8_lossy(&watch.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&watch.stdout);
+    assert!(stdout.contains("watch indexed"), "{stdout}");
+    assert!(!lock_path.exists());
 }
 
 #[test]
@@ -2140,6 +2336,90 @@ fn watch_can_install_and_start_launch_agent_with_configurable_launchctl() {
     assert!(log.contains(agent.to_str().unwrap()), "{log}");
     assert!(
         log.contains("print gui/501/com.example.codex-recall.watch"),
+        "{log}"
+    );
+}
+
+#[test]
+fn default_watch_install_retires_legacy_launch_agent() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+
+    let temp = temp_dir("watch-launch-agent-retire-legacy");
+    let home = temp.join("home");
+    let source = temp.join("sessions");
+    let db = temp.join("index.sqlite");
+    let state = temp.join("watch-state.json");
+    let agent = temp.join("dev.codex-recall.watch.plist");
+    let launchctl_log = temp.join("launchctl.log");
+    let fake_launchctl = temp.join("launchctl");
+    let legacy_agent = home
+        .join("Library")
+        .join("LaunchAgents")
+        .join("com.hanif.codex-recall.watch.plist");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(legacy_agent.parent().unwrap()).unwrap();
+    fs::write(&legacy_agent, "<plist/>").unwrap();
+    fs::write(
+        &fake_launchctl,
+        format!(
+            "#!/bin/sh\nprintf '%s ' \"$@\" >> {}\nprintf '\\n' >> {}\nexit 0\n",
+            launchctl_log.display(),
+            launchctl_log.display()
+        ),
+    )
+    .unwrap();
+    let chmod = Command::new("chmod")
+        .args(["+x"])
+        .arg(&fake_launchctl)
+        .output()
+        .unwrap();
+    assert!(chmod.status.success());
+
+    let install = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+        .env("CODEX_RECALL_LAUNCHCTL", &fake_launchctl)
+        .env("CODEX_RECALL_UID", "501")
+        .env("HOME", &home)
+        .args([
+            "watch",
+            "--install-launch-agent",
+            "--start-launch-agent",
+            "--agent-path",
+        ])
+        .arg(&agent)
+        .args(["--db"])
+        .arg(&db)
+        .args(["--state"])
+        .arg(&state)
+        .args(["--source"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        install.status.success(),
+        "install failed: {}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&install.stdout);
+    assert!(
+        stdout.contains("retired legacy launch agent: com.hanif.codex-recall.watch"),
+        "{stdout}"
+    );
+    assert!(!legacy_agent.exists());
+    let log = fs::read_to_string(launchctl_log).unwrap();
+    assert!(
+        log.contains("print gui/501/com.hanif.codex-recall.watch"),
+        "{log}"
+    );
+    assert!(
+        log.contains("bootout gui/501/com.hanif.codex-recall.watch"),
+        "{log}"
+    );
+    assert!(log.contains("bootstrap gui/501"), "{log}");
+    assert!(
+        log.contains("print gui/501/dev.codex-recall.watch"),
         "{log}"
     );
 }
