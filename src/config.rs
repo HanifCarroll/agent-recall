@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 
 pub const DEFAULT_LAUNCH_AGENT_LABEL: &str = "dev.codex-recall.watch";
+pub const LEGACY_LAUNCH_AGENT_LABELS: &[&str] = &["com.hanif.codex-recall.watch"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {

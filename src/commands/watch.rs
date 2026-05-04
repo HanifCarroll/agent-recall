@@ -1,11 +1,16 @@
 use crate::commands::index::resolve_sources;
-use crate::config::{default_db_path, default_state_path, DEFAULT_LAUNCH_AGENT_LABEL};
+use crate::config::{
+    default_db_path, default_state_path, DEFAULT_LAUNCH_AGENT_LABEL, LEGACY_LAUNCH_AGENT_LABELS,
+};
 use crate::indexer::{
     index_sources_with_filters_and_progress,
     index_stable_pending_sources_with_filters_and_progress, scan_sources_for_pending_with_filters,
     IndexFilters, SourceScanReport,
 };
 use crate::output::{format_bytes, now_timestamp, progress_line};
+use crate::refresh_lock::{
+    acquire_refresh_lock, refresh_lock_status, refresh_lock_wait_timeout, RefreshLockStatus,
+};
 use crate::store::Store;
 use anyhow::{anyhow, Context, Result};
 use clap::Args;
@@ -114,6 +119,7 @@ pub(crate) struct WatchStatusReport {
     pub state: WatchState,
     pub last_indexed_at: Option<String>,
     pub freshness: FreshnessVerdict,
+    pub refresh_lock: RefreshLockStatus,
     pub launch_agent: LaunchAgentStatus,
 }
 
@@ -168,6 +174,10 @@ pub fn run_watch(args: WatchArgs) -> Result<()> {
             },
         )?;
         println!("installed launch agent: {}", agent_path.display());
+        let retired = retire_legacy_launch_agents(&args.agent_label, &agent_path)?;
+        for label in retired {
+            println!("retired legacy launch agent: {label}");
+        }
         if args.start_launch_agent {
             start_launch_agent(&args.agent_label, &agent_path)?;
             println!("started launch agent: {}", args.agent_label);
@@ -186,6 +196,11 @@ pub fn run_watch(args: WatchArgs) -> Result<()> {
             &sources,
             quiet_for,
             &filters,
+            if args.once {
+                refresh_lock_wait_timeout()
+            } else {
+                Duration::ZERO
+            },
         ) {
             Ok(()) => {
                 if args.once {
@@ -213,7 +228,13 @@ fn run_watch_iteration_with_lock_retries(
     sources: &[PathBuf],
     quiet_for: Duration,
     filters: &IndexFilters,
+    refresh_lock_wait: Duration,
 ) -> Result<()> {
+    let Some(_refresh_lock) = acquire_refresh_lock(db_path, refresh_lock_wait)? else {
+        println!("watch using current index: another refresh is already active");
+        return Ok(());
+    };
+
     let retry_delays = lock_retry_delays();
     let total_attempts = retry_delays.len() + 1;
 
@@ -421,6 +442,12 @@ pub fn run_status(args: StatusArgs) -> Result<()> {
             .clone()
             .unwrap_or_else(|| "none".to_owned())
     );
+    println!(
+        "refresh_lock: {} (active: {}, stale: {})",
+        report.refresh_lock.path.display(),
+        report.refresh_lock.active,
+        report.refresh_lock.stale
+    );
     if report.launch_agent.supported {
         println!(
             "launch_agent: {} (installed: {}, running: {})",
@@ -460,7 +487,8 @@ pub(crate) fn build_status_report(
     let last_indexed_at = last_indexed_at.or(state.last_indexed_at.clone());
     let db_exists = db_path.exists();
     let launch_agent = launch_agent_status(agent_label, agent_path);
-    let freshness = freshness_verdict(db_exists, &scan, &state);
+    let refresh_lock = refresh_lock_status(&db_path);
+    let freshness = freshness_verdict(db_exists, &scan, &state, &refresh_lock, &launch_agent);
 
     Ok(WatchStatusReport {
         db_path,
@@ -472,6 +500,7 @@ pub(crate) fn build_status_report(
         state,
         last_indexed_at,
         freshness,
+        refresh_lock,
         launch_agent,
     })
 }
@@ -499,6 +528,16 @@ pub(crate) fn status_json(report: &WatchStatusReport) -> Value {
         "last_error": report.state.last_error,
         "last_indexed_sessions": report.state.last_indexed_sessions,
         "last_indexed_events": report.state.last_indexed_events,
+        "refresh_lock": {
+            "path": report.refresh_lock.path,
+            "exists": report.refresh_lock.exists,
+            "active": report.refresh_lock.active,
+            "stale": report.refresh_lock.stale,
+            "age_ms": report.refresh_lock.age_ms,
+            "stale_after_ms": report.refresh_lock.stale_after_ms,
+            "pid": report.refresh_lock.pid,
+            "owner_alive": report.refresh_lock.owner_alive,
+        },
         "launch_agent": {
             "label": report.launch_agent.label,
             "path": report.launch_agent.path,
@@ -513,7 +552,27 @@ fn freshness_verdict(
     db_exists: bool,
     scan: &SourceScanReport,
     state: &WatchState,
+    refresh_lock: &RefreshLockStatus,
+    launch_agent: &LaunchAgentStatus,
 ) -> FreshnessVerdict {
+    if refresh_lock.active {
+        let owner = match launch_agent.running {
+            Some(true) => "background watcher",
+            _ => "another refresh",
+        };
+        return FreshnessVerdict {
+            state: "refreshing",
+            message: format!("{owner} is active; current index remains usable"),
+        };
+    }
+
+    if refresh_lock.stale {
+        return FreshnessVerdict {
+            state: "stale",
+            message: "refresh lock appears stale; run a bounded refresh to clear it".to_owned(),
+        };
+    }
+
     if let Some(error) = &state.last_error {
         if is_database_lock_text(error) {
             return FreshnessVerdict {
@@ -686,7 +745,10 @@ fn start_launch_agent(label: &str, path: &Path) -> Result<()> {
         .output()
         .context("run launchctl bootstrap")?;
 
-    if !bootstrap.status.success() && !launchctl_already_loaded(&bootstrap) {
+    if !bootstrap.status.success()
+        && !launchctl_already_loaded(&bootstrap)
+        && !is_launch_agent_running(label)
+    {
         return Err(anyhow!(
             "launchctl bootstrap failed: {}{}",
             String::from_utf8_lossy(&bootstrap.stdout),
@@ -695,17 +757,7 @@ fn start_launch_agent(label: &str, path: &Path) -> Result<()> {
     }
 
     if !bootstrap.status.success() {
-        let kickstart = ProcessCommand::new(launchctl_executable())
-            .args(["kickstart", "-k", &format!("{domain}/{label}")])
-            .output()
-            .context("run launchctl kickstart")?;
-        if !kickstart.status.success() {
-            return Err(anyhow!(
-                "launchctl kickstart failed: {}{}",
-                String::from_utf8_lossy(&kickstart.stdout),
-                String::from_utf8_lossy(&kickstart.stderr)
-            ));
-        }
+        kickstart_launch_agent(label)?;
     }
 
     let print = ProcessCommand::new(launchctl_executable())
@@ -723,6 +775,72 @@ fn start_launch_agent(label: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn kickstart_launch_agent(label: &str) -> Result<()> {
+    let domain = launch_agent_domain()?;
+    let kickstart = ProcessCommand::new(launchctl_executable())
+        .args(["kickstart", "-k", &format!("{domain}/{label}")])
+        .output()
+        .context("run launchctl kickstart")?;
+    if !kickstart.status.success() {
+        return Err(anyhow!(
+            "launchctl kickstart failed: {}{}",
+            String::from_utf8_lossy(&kickstart.stdout),
+            String::from_utf8_lossy(&kickstart.stderr)
+        ));
+    }
+    Ok(())
+}
+
+fn retire_legacy_launch_agents(active_label: &str, active_path: &Path) -> Result<Vec<String>> {
+    if active_label != DEFAULT_LAUNCH_AGENT_LABEL || !launch_agent_supported() {
+        return Ok(Vec::new());
+    }
+
+    let mut retired = Vec::new();
+    for legacy_label in LEGACY_LAUNCH_AGENT_LABELS {
+        if *legacy_label == active_label {
+            continue;
+        }
+        let legacy_path = default_launch_agent_path(legacy_label)?;
+        if legacy_path == active_path {
+            continue;
+        }
+
+        let mut changed = false;
+        if is_launch_agent_running(legacy_label) {
+            bootout_launch_agent(legacy_label)?;
+            changed = true;
+        }
+        if legacy_path.exists() {
+            fs::remove_file(&legacy_path)
+                .with_context(|| format!("remove legacy launch agent {}", legacy_path.display()))?;
+            changed = true;
+        }
+        if changed {
+            retired.push((*legacy_label).to_owned());
+        }
+    }
+
+    Ok(retired)
+}
+
+fn bootout_launch_agent(label: &str) -> Result<()> {
+    let domain = launch_agent_domain()?;
+    let output = ProcessCommand::new(launchctl_executable())
+        .args(["bootout", &format!("{domain}/{label}")])
+        .output()
+        .context("run launchctl bootout")?;
+    if output.status.success() || launchctl_not_loaded(&output) {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "launchctl bootout failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
+}
+
 fn launchctl_already_loaded(output: &std::process::Output) -> bool {
     let text = format!(
         "{}{}",
@@ -731,6 +849,18 @@ fn launchctl_already_loaded(output: &std::process::Output) -> bool {
     )
     .to_ascii_lowercase();
     text.contains("already") && (text.contains("loaded") || text.contains("bootstrapped"))
+}
+
+fn launchctl_not_loaded(output: &std::process::Output) -> bool {
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_ascii_lowercase();
+    text.contains("could not find service")
+        || text.contains("no such process")
+        || text.contains("not loaded")
 }
 
 fn launch_agent_domain() -> Result<String> {

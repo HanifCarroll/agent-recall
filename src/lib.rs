@@ -6,6 +6,7 @@ pub mod memory;
 mod output;
 pub mod parser;
 pub mod redact;
+mod refresh_lock;
 pub mod store;
 
 use anyhow::Result;
