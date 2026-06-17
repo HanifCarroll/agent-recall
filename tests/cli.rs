@@ -8,7 +8,7 @@ use rusqlite::Connection;
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "codex-recall-cli-test-{}-{}",
+        "agent-recall-cli-test-{}-{}",
         std::process::id(),
         name
     ));
@@ -111,7 +111,7 @@ fn write_memory_session_file(
 }
 
 fn index_sources(db: &std::path::Path, sources: &[&std::path::Path]) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_codex-recall"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_agent-recall"));
     command.args(["index", "--db"]).arg(db);
     for source in sources {
         command.args(["--source"]).arg(source);
@@ -146,7 +146,7 @@ fn search_does_not_create_missing_database() {
     let temp = temp_dir("search-missing-db");
     let db = temp.join("missing").join("index.sqlite");
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "webhook", "--db"])
         .arg(&db)
         .output()
@@ -167,7 +167,7 @@ fn index_then_search_outputs_ranked_receipts() {
     let db = temp.join("index.sqlite");
     write_sample_session(&source);
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -181,7 +181,7 @@ fn index_then_search_outputs_ranked_receipts() {
     );
     assert!(String::from_utf8_lossy(&index.stdout).contains("indexed 1 session files"));
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "webhook secret", "--db"])
         .arg(&db)
         .output()
@@ -201,7 +201,7 @@ fn index_then_search_outputs_ranked_receipts() {
 
 #[test]
 fn cli_supports_top_level_version_flag() {
-    let version = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let version = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .arg("--version")
         .output()
         .unwrap();
@@ -219,7 +219,7 @@ fn cli_supports_top_level_version_flag() {
 
 #[test]
 fn subcommand_help_lists_typed_flags() {
-    let help = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let help = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["watch", "--help"])
         .output()
         .unwrap();
@@ -235,7 +235,7 @@ fn subcommand_help_lists_typed_flags() {
 
 #[test]
 fn help_uses_generic_launch_agent_defaults() {
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["watch", "--help"])
         .output()
         .unwrap();
@@ -246,15 +246,15 @@ fn help_uses_generic_launch_agent_defaults() {
     );
     let watch_stdout = String::from_utf8_lossy(&watch.stdout);
     assert!(
-        watch_stdout.contains("[default: dev.codex-recall.watch]"),
+        watch_stdout.contains("[default: dev.agent-recall.watch]"),
         "{watch_stdout}"
     );
     assert!(
-        !watch_stdout.contains("com.hanif.codex-recall.watch"),
+        !watch_stdout.contains("com.hanif.agent-recall.watch"),
         "{watch_stdout}"
     );
 
-    let doctor = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let doctor = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["doctor", "--help"])
         .output()
         .unwrap();
@@ -265,11 +265,11 @@ fn help_uses_generic_launch_agent_defaults() {
     );
     let doctor_stdout = String::from_utf8_lossy(&doctor.stdout);
     assert!(
-        doctor_stdout.contains("[default: dev.codex-recall.watch]"),
+        doctor_stdout.contains("[default: dev.agent-recall.watch]"),
         "{doctor_stdout}"
     );
     assert!(
-        !doctor_stdout.contains("com.hanif.codex-recall.watch"),
+        !doctor_stdout.contains("com.hanif.agent-recall.watch"),
         "{doctor_stdout}"
     );
 }
@@ -284,12 +284,12 @@ fn watch_once_indexes_archived_session_with_curly_apostrophe() {
         &source,
         "curly-apostrophe.jsonl",
         "session-curly",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         "Here’s a note from an archived session.",
     );
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["watch", "--once", "--quiet-for", "0", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -310,7 +310,7 @@ fn watch_once_indexes_archived_session_with_curly_apostrophe() {
         String::from_utf8_lossy(&watch.stdout)
     );
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "archived session", "--db"])
         .arg(&db)
         .output()
@@ -338,9 +338,9 @@ fn watch_once_supports_repo_and_since_bounds_without_scanning_older_archives() {
         &source,
         "matching.jsonl",
         "matching-session",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
-        "Bounded watcher should index this codex recall session.",
+        "Bounded watcher should index this agent recall session.",
     );
     write_session_file(
         &source,
@@ -351,14 +351,14 @@ fn watch_once_supports_repo_and_since_bounds_without_scanning_older_archives() {
         "Bounded watcher should skip this other repo session.",
     );
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "watch",
             "--once",
             "--quiet-for",
             "0",
             "--repo",
-            "codex-recall",
+            "agent-recall",
             "--since",
             "2026-04-13",
             "--db",
@@ -382,8 +382,58 @@ fn watch_once_supports_repo_and_since_bounds_without_scanning_older_archives() {
         String::from_utf8_lossy(&watch.stdout)
     );
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "Bounded watcher", "--json", "--db"])
+        .arg(&db)
+        .output()
+        .unwrap();
+    assert!(
+        search.status.success(),
+        "search failed: {}",
+        String::from_utf8_lossy(&search.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1, "{json:#}");
+    assert_eq!(results[0]["session_id"], "matching-session");
+}
+
+#[test]
+fn index_supports_since_bounds_for_iso_named_session_files() {
+    let temp = temp_dir("index-bounded-since");
+    let source = temp.join("sessions");
+    let db = temp.join("index.sqlite");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("2026-04-12T00-00-00-000Z_old.jsonl"),
+        "{not-json\n",
+    )
+    .unwrap();
+    write_session_file(
+        &source,
+        "2026-04-13T01-00-00-000Z_matching.jsonl",
+        "matching-session",
+        "/Users/me/projects/agent-recall",
+        "2026-04-13T01:00:00Z",
+        "Bounded index should include this session.",
+    );
+
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .args(["index", "--since", "2026-04-13", "--db"])
+        .arg(&db)
+        .args(["--source"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        index.status.success(),
+        "index failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&index.stdout),
+        String::from_utf8_lossy(&index.stderr)
+    );
+
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .args(["search", "Bounded index", "--json", "--db"])
         .arg(&db)
         .output()
         .unwrap();
@@ -405,7 +455,7 @@ fn search_json_outputs_machine_readable_receipts() {
     let db = temp.join("index.sqlite");
     write_sample_session(&source);
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -414,7 +464,7 @@ fn search_json_outputs_machine_readable_receipts() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "webhook secret", "--json", "--db"])
         .arg(&db)
         .output()
@@ -467,7 +517,7 @@ fn show_disambiguates_duplicate_session_ids_and_accepts_session_key() {
         "The archived webhook secret was missing.",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -476,7 +526,7 @@ fn show_disambiguates_duplicate_session_ids_and_accepts_session_key() {
         .unwrap();
     assert!(index.status.success());
 
-    let ambiguous_show = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let ambiguous_show = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["show", "session-dup", "--db"])
         .arg(&db)
         .output()
@@ -486,7 +536,7 @@ fn show_disambiguates_duplicate_session_ids_and_accepts_session_key() {
         String::from_utf8_lossy(&ambiguous_show.stderr).contains("multiple indexed sessions match")
     );
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "archived webhook", "--json", "--db"])
         .arg(&db)
         .output()
@@ -495,7 +545,7 @@ fn show_disambiguates_duplicate_session_ids_and_accepts_session_key() {
     let json: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
     let key = json["results"][0]["session_key"].as_str().unwrap();
 
-    let show = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let show = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["show", key, "--db"])
         .arg(&db)
         .output()
@@ -517,7 +567,7 @@ fn show_prints_session_events_with_line_receipts() {
     let db = temp.join("index.sqlite");
     write_sample_session(&source);
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -526,7 +576,7 @@ fn show_prints_session_events_with_line_receipts() {
         .unwrap();
     assert!(index.status.success());
 
-    let show = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let show = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["show", "session-1", "--db"])
         .arg(&db)
         .output()
@@ -570,7 +620,7 @@ fn search_filters_by_repo_cwd_and_since_flags() {
         "2026-04-13T01:00:00Z",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -579,7 +629,7 @@ fn search_filters_by_repo_cwd_and_since_flags() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "search",
             "webhook secret",
@@ -637,7 +687,7 @@ fn search_filters_by_from_until_and_excluded_session() {
     );
     index_sources(&db, &[&source]);
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "search",
             "webhook secret",
@@ -673,7 +723,7 @@ fn search_rejects_since_and_from_together() {
     write_sample_session(&source);
     index_sources(&db, &[&source]);
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "search",
             "webhook secret",
@@ -715,7 +765,7 @@ fn search_dedupes_active_and_archived_session_copies_by_default() {
     );
     index_sources(&db, &[&active, &archived]);
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "webhook secret", "--json", "--db"])
         .arg(&db)
         .output()
@@ -732,7 +782,7 @@ fn search_dedupes_active_and_archived_session_copies_by_default() {
         .unwrap()
         .contains("/sessions/"));
 
-    let duplicate_search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let duplicate_search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "search",
             "webhook secret",
@@ -776,7 +826,7 @@ fn search_supports_day_kind_json_and_exclude_current() {
     );
     index_sources(&db, &[&source]);
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .env("CODEX_THREAD_ID", "current-session")
         .args([
             "search",
@@ -812,7 +862,7 @@ fn search_rejects_day_with_other_date_filters() {
     write_sample_session(&source);
     index_sources(&db, &[&source]);
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "search",
             "webhook",
@@ -848,7 +898,7 @@ fn search_accepts_relative_since_days() {
         "2999-01-01T01:00:00Z",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -857,7 +907,7 @@ fn search_accepts_relative_since_days() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "webhook secret", "--since", "7d", "--db"])
         .arg(&db)
         .output()
@@ -896,7 +946,7 @@ fn search_prioritizes_current_repo_by_default() {
         "The production webhook secret was missing.",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -905,7 +955,7 @@ fn search_prioritizes_current_repo_by_default() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .current_dir(&current_repo)
         .args(["search", "webhook secret", "--db"])
         .arg(&db)
@@ -932,7 +982,7 @@ fn doctor_json_reports_database_checks() {
     let db = temp.join("index.sqlite");
     write_sample_session(&source);
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -941,7 +991,7 @@ fn doctor_json_reports_database_checks() {
         .unwrap();
     assert!(index.status.success());
 
-    let doctor = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let doctor = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["doctor", "--json", "--db"])
         .arg(&db)
         .output()
@@ -964,7 +1014,7 @@ fn doctor_does_not_create_missing_database() {
     let temp = temp_dir("doctor-missing");
     let db = temp.join("missing").join("index.sqlite");
 
-    let doctor = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let doctor = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["doctor", "--json", "--db"])
         .arg(&db)
         .output()
@@ -993,7 +1043,7 @@ fn rebuild_recreates_index_from_current_sources() {
     let db = temp.join("index.sqlite");
     write_sample_session(&source);
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -1005,7 +1055,7 @@ fn rebuild_recreates_index_from_current_sources() {
     fs::remove_dir_all(&source).unwrap();
     fs::create_dir_all(&source).unwrap();
 
-    let rebuild = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let rebuild = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["rebuild", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -1018,7 +1068,7 @@ fn rebuild_recreates_index_from_current_sources() {
         String::from_utf8_lossy(&rebuild.stderr)
     );
 
-    let stats = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let stats = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["stats", "--db"])
         .arg(&db)
         .output()
@@ -1034,7 +1084,7 @@ fn index_reports_progress_for_larger_sources() {
     let db = temp.join("index.sqlite");
     write_many_sessions(&source, 101);
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -1090,7 +1140,7 @@ fn memories_json_extracts_stable_objects_and_consolidates_evidence() {
     );
     index_sources(&db, &[&source]);
 
-    let memories = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let memories = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["memories", "--json", "--db"])
         .arg(&db)
         .output()
@@ -1126,7 +1176,7 @@ fn memories_json_extracts_stable_objects_and_consolidates_evidence() {
     );
     assert_eq!(
         decision["resource_uri"],
-        format!("codex-recall://memory/{}", decision["id"].as_str().unwrap())
+        format!("agent-recall://memory/{}", decision["id"].as_str().unwrap())
     );
 }
 
@@ -1139,7 +1189,7 @@ fn memory_resources_and_read_resource_return_mcp_ready_json() {
         &source,
         "resource.jsonl",
         "resource-session",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         &[(
             "agent_message",
@@ -1148,7 +1198,7 @@ fn memory_resources_and_read_resource_return_mcp_ready_json() {
     );
     index_sources(&db, &[&source]);
 
-    let resources = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let resources = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["resources", "--kind", "memory", "--json", "--db"])
         .arg(&db)
         .output()
@@ -1164,9 +1214,9 @@ fn memory_resources_and_read_resource_return_mcp_ready_json() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert!(uri.starts_with("codex-recall://memory/"), "{uri}");
+    assert!(uri.starts_with("agent-recall://memory/"), "{uri}");
 
-    let read = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let read = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["read-resource", &uri, "--db"])
         .arg(&db)
         .output()
@@ -1191,13 +1241,13 @@ fn delta_uses_cursors_for_incremental_sessions_and_memories() {
         &source,
         "first.jsonl",
         "delta-session-1",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         &[("agent_message", "Decision: Keep MCP resources JSON-only.")],
     );
     index_sources(&db, &[&source]);
 
-    let first = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let first = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["delta", "--json", "--db"])
         .arg(&db)
         .output()
@@ -1224,7 +1274,7 @@ fn delta_uses_cursors_for_incremental_sessions_and_memories() {
         &source,
         "second.jsonl",
         "delta-session-2",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T02:00:00Z",
         &[(
             "agent_message",
@@ -1233,7 +1283,7 @@ fn delta_uses_cursors_for_incremental_sessions_and_memories() {
     );
     index_sources(&db, &[&source]);
 
-    let second = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let second = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["delta", "--cursor", &cursor, "--json", "--db"])
         .arg(&db)
         .output()
@@ -1265,7 +1315,7 @@ fn related_finds_sessions_and_memories_via_shared_memory_objects() {
         &source,
         "first.jsonl",
         "related-session-1",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         &[
             (
@@ -1282,7 +1332,7 @@ fn related_finds_sessions_and_memories_via_shared_memory_objects() {
         &source,
         "second.jsonl",
         "related-session-2",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T02:00:00Z",
         &[(
             "agent_message",
@@ -1291,7 +1341,7 @@ fn related_finds_sessions_and_memories_via_shared_memory_objects() {
     );
     index_sources(&db, &[&source]);
 
-    let related = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let related = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["related", "related-session-1", "--json", "--db"])
         .arg(&db)
         .output()
@@ -1326,17 +1376,17 @@ fn search_trace_and_eval_fixture_work_for_agent_memory_retrieval() {
         &source,
         "trace.jsonl",
         "trace-session",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         &[(
             "agent_message",
-            "Decision: Keep resources exposed as codex-recall URIs.",
+            "Decision: Keep resources exposed as agent-recall URIs.",
         )],
     );
     index_sources(&db, &[&source]);
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .args(["search", "codex-recall uris", "--trace", "--json", "--db"])
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .args(["search", "agent-recall uris", "--trace", "--json", "--db"])
         .arg(&db)
         .output()
         .unwrap();
@@ -1349,9 +1399,9 @@ fn search_trace_and_eval_fixture_work_for_agent_memory_retrieval() {
     assert_eq!(search_json["match_strategy"], "all_terms");
     assert_eq!(
         search_json["trace"]["fts_query"],
-        "\"codex\" AND \"recall\" AND \"uris\""
+        "\"agent\" AND \"recall\" AND \"uris\""
     );
-    assert_eq!(search_json["trace"]["query_terms"][0], "codex");
+    assert_eq!(search_json["trace"]["query_terms"][0], "agent");
     assert!(
         search_json["results"][0]["trace"]["session_hit_count"]
             .as_u64()
@@ -1373,16 +1423,16 @@ fn search_trace_and_eval_fixture_work_for_agent_memory_retrieval() {
     {
       "name": "search recall",
       "command": "search",
-      "query": "codex-recall uris",
+      "query": "agent-recall uris",
       "expected": { "session_id": "trace-session" }
     },
     {
       "name": "memory recall",
       "command": "memories",
-      "query": "codex-recall uris",
+      "query": "agent-recall uris",
       "expected": {
         "top_memory_kind": "decision",
-        "top_memory_summary_contains": "codex-recall URIs"
+        "top_memory_summary_contains": "agent-recall URIs"
       }
     },
     {
@@ -1399,7 +1449,7 @@ fn search_trace_and_eval_fixture_work_for_agent_memory_retrieval() {
     )
     .unwrap();
 
-    let eval = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let eval = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["eval", fixture.to_str().unwrap(), "--json", "--db"])
         .arg(&db)
         .output()
@@ -1424,7 +1474,7 @@ fn delta_cursor_uses_monotonic_change_feed_ids() {
         &source,
         "first.jsonl",
         "change-feed-1",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         &[(
             "agent_message",
@@ -1433,7 +1483,7 @@ fn delta_cursor_uses_monotonic_change_feed_ids() {
     );
     index_sources(&db, &[&source]);
 
-    let first = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let first = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["delta", "--json", "--db"])
         .arg(&db)
         .output()
@@ -1452,7 +1502,7 @@ fn delta_cursor_uses_monotonic_change_feed_ids() {
         &source,
         "second.jsonl",
         "change-feed-2",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T02:00:00Z",
         &[(
             "agent_message",
@@ -1461,7 +1511,7 @@ fn delta_cursor_uses_monotonic_change_feed_ids() {
     );
     index_sources(&db, &[&source]);
 
-    let second = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let second = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["delta", "--cursor", &first_cursor, "--json", "--db"])
         .arg(&db)
         .output()
@@ -1487,7 +1537,7 @@ fn status_json_reports_pending_files_without_creating_missing_database() {
     let state = temp.join("state.json");
     write_sample_session(&source);
 
-    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1519,7 +1569,7 @@ fn status_json_reports_fresh_and_live_write_verdicts() {
     let state = temp.join("watch-state.json");
     write_sample_session(&source);
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "watch",
             "--once",
@@ -1538,7 +1588,7 @@ fn status_json_reports_fresh_and_live_write_verdicts() {
         .unwrap();
     assert!(watch.status.success());
 
-    let fresh = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let fresh = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1561,7 +1611,7 @@ fn status_json_reports_fresh_and_live_write_verdicts() {
         "2026-04-13T02:00:00Z",
         "A live write is still settling.",
     );
-    let live = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let live = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--quiet-for", "86400", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1584,7 +1634,7 @@ fn status_json_describes_mixed_stable_and_live_backlog() {
     let state = temp.join("watch-state.json");
     write_sample_session(&source);
 
-    let initial_watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let initial_watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["watch", "--once", "--quiet-for", "0", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1613,7 +1663,7 @@ fn status_json_describes_mixed_stable_and_live_backlog() {
         "The live write is still settling.",
     );
 
-    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--quiet-for", "1", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1665,7 +1715,7 @@ fn watch_once_indexes_stable_files_even_when_live_writes_are_still_settling() {
         "The live write is still settling.",
     );
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["watch", "--once", "--quiet-for", "1", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1687,7 +1737,7 @@ fn watch_once_indexes_stable_files_even_when_live_writes_are_still_settling() {
         "{stdout}"
     );
 
-    let stable_search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let stable_search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "stable pending session", "--db"])
         .arg(&db)
         .output()
@@ -1699,7 +1749,7 @@ fn watch_once_indexes_stable_files_even_when_live_writes_are_still_settling() {
         String::from_utf8_lossy(&stable_search.stdout)
     );
 
-    let live_search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let live_search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "live write is still settling", "--db"])
         .arg(&db)
         .output()
@@ -1711,7 +1761,7 @@ fn watch_once_indexes_stable_files_even_when_live_writes_are_still_settling() {
         String::from_utf8_lossy(&live_search.stdout)
     );
 
-    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--quiet-for", "1", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1742,7 +1792,7 @@ fn status_json_reports_using_stale_index_after_lock_failure() {
     )
     .unwrap();
 
-    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1798,8 +1848,8 @@ fn status_json_reports_refreshing_when_refresh_lock_is_active() {
     )
     .unwrap();
 
-    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "0")
+    let status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .env("AGENT_RECALL_REFRESH_LOCK_STALE_MS", "0")
         .args(["status", "--json", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1840,8 +1890,8 @@ fn status_json_does_not_report_refreshing_for_stale_refresh_lock() {
     fs::create_dir_all(db.parent().unwrap()).unwrap();
     fs::write(format!("{}.refresh.lock", db.display()), "active refresh\n").unwrap();
 
-    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "0")
+    let status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .env("AGENT_RECALL_REFRESH_LOCK_STALE_MS", "0")
         .args(["status", "--json", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1893,10 +1943,10 @@ fn watch_once_uses_stale_index_when_refresh_database_is_locked() {
     let lock = Connection::open(&db).unwrap();
     lock.execute_batch("BEGIN IMMEDIATE").unwrap();
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .env("CODEX_RECALL_SQLITE_BUSY_TIMEOUT_MS", "1")
-        .env("CODEX_RECALL_WATCH_LOCK_RETRY_MS", "1")
-        .env("CODEX_RECALL_WATCH_LOCK_RETRIES", "2")
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .env("AGENT_RECALL_SQLITE_BUSY_TIMEOUT_MS", "1")
+        .env("AGENT_RECALL_WATCH_LOCK_RETRY_MS", "1")
+        .env("AGENT_RECALL_WATCH_LOCK_RETRIES", "2")
         .args(["watch", "--once", "--quiet-for", "0", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1915,7 +1965,7 @@ fn watch_once_uses_stale_index_when_refresh_database_is_locked() {
     assert!(stdout.contains("using stale index"), "{stdout}");
     assert!(stdout.contains("database is locked"), "{stdout}");
 
-    let status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1931,7 +1981,7 @@ fn watch_once_uses_stale_index_when_refresh_database_is_locked() {
 
     drop(lock);
 
-    let old_search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let old_search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "old indexed", "--db"])
         .arg(&db)
         .output()
@@ -1940,7 +1990,7 @@ fn watch_once_uses_stale_index_when_refresh_database_is_locked() {
     let stdout = String::from_utf8_lossy(&old_search.stdout);
     assert!(stdout.contains("old-session"), "{stdout}");
 
-    let new_search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let new_search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "new pending", "--db"])
         .arg(&db)
         .output()
@@ -1975,9 +2025,9 @@ fn watch_once_uses_current_index_when_refresh_lock_is_busy() {
     );
     fs::write(format!("{}.refresh.lock", db.display()), "active refresh").unwrap();
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .env("CODEX_RECALL_REFRESH_LOCK_WAIT_MS", "1")
-        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "600000")
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .env("AGENT_RECALL_REFRESH_LOCK_WAIT_MS", "1")
+        .env("AGENT_RECALL_REFRESH_LOCK_STALE_MS", "600000")
         .args(["watch", "--once", "--quiet-for", "0", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -1998,7 +2048,7 @@ fn watch_once_uses_current_index_when_refresh_lock_is_busy() {
         "{stdout}"
     );
 
-    let new_search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let new_search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "new pending", "--db"])
         .arg(&db)
         .output()
@@ -2026,9 +2076,9 @@ fn watch_once_waits_for_refresh_lock_then_indexes() {
         let _ = fs::remove_file(lock_to_remove);
     });
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .env("CODEX_RECALL_REFRESH_LOCK_WAIT_MS", "2000")
-        .env("CODEX_RECALL_REFRESH_LOCK_STALE_MS", "600000")
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .env("AGENT_RECALL_REFRESH_LOCK_WAIT_MS", "2000")
+        .env("AGENT_RECALL_REFRESH_LOCK_STALE_MS", "600000")
         .args(["watch", "--once", "--quiet-for", "0", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -2056,7 +2106,7 @@ fn watch_once_indexes_stable_sessions_and_writes_status() {
     let state = temp.join("watch-state.json");
     write_sample_session(&source);
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "watch",
             "--once",
@@ -2082,7 +2132,7 @@ fn watch_once_indexes_stable_sessions_and_writes_status() {
     let stdout = String::from_utf8_lossy(&watch.stdout);
     assert!(stdout.contains("watch indexed"), "{stdout}");
 
-    let stats = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let stats = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["stats", "--db"])
         .arg(&db)
         .output()
@@ -2110,19 +2160,19 @@ fn status_and_doctor_support_repo_and_since_filters() {
         &source,
         "matching.jsonl",
         "matching-session",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         "Filtered status should stay focused on this session.",
     );
 
-    let watch = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let watch = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "watch",
             "--once",
             "--quiet-for",
             "0",
             "--repo",
-            "codex-recall",
+            "agent-recall",
             "--since",
             "2026-04-13",
             "--db",
@@ -2141,7 +2191,7 @@ fn status_and_doctor_support_repo_and_since_filters() {
         String::from_utf8_lossy(&watch.stderr)
     );
 
-    let unfiltered_status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let unfiltered_status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["status", "--json", "--quiet-for", "0", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -2155,14 +2205,14 @@ fn status_and_doctor_support_repo_and_since_filters() {
     assert_eq!(json["freshness"], "stale");
     assert_eq!(json["pending_files"], 1);
 
-    let filtered_status = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let filtered_status = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "status",
             "--json",
             "--quiet-for",
             "0",
             "--repo",
-            "codex-recall",
+            "agent-recall",
             "--since",
             "2026-04-13",
             "--db",
@@ -2178,17 +2228,17 @@ fn status_and_doctor_support_repo_and_since_filters() {
     let json: serde_json::Value = serde_json::from_slice(&filtered_status.stdout).unwrap();
     assert_eq!(json["freshness"], "fresh");
     assert_eq!(json["pending_files"], 0);
-    assert_eq!(json["filters"]["repo"], "codex-recall");
+    assert_eq!(json["filters"]["repo"], "agent-recall");
     assert_eq!(json["filters"]["since"], "2026-04-13");
 
-    let filtered_doctor = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let filtered_doctor = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "doctor",
             "--json",
             "--quiet-for",
             "0",
             "--repo",
-            "codex-recall",
+            "agent-recall",
             "--since",
             "2026-04-13",
             "--db",
@@ -2205,7 +2255,7 @@ fn status_and_doctor_support_repo_and_since_filters() {
     assert_eq!(json["freshness"]["state"], "fresh");
     assert_eq!(
         json["freshness"]["status"]["filters"]["repo"],
-        "codex-recall"
+        "agent-recall"
     );
     assert_eq!(
         json["freshness"]["status"]["filters"]["since"],
@@ -2219,15 +2269,15 @@ fn watch_installs_launch_agent_plist_when_requested() {
     let source = temp.join("sessions");
     let db = temp.join("index.sqlite");
     let state = temp.join("watch-state.json");
-    let agent = temp.join("com.example.codex-recall.watch.plist");
+    let agent = temp.join("com.example.agent-recall.watch.plist");
     fs::create_dir_all(&source).unwrap();
 
-    let install = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let install = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "watch",
             "--install-launch-agent",
             "--agent-label",
-            "com.example.codex-recall.watch",
+            "com.example.agent-recall.watch",
             "--agent-path",
         ])
         .arg(&agent)
@@ -2258,7 +2308,7 @@ fn watch_installs_launch_agent_plist_when_requested() {
 
     let plist = fs::read_to_string(&agent).unwrap();
     assert!(plist.contains("<key>Label</key>"), "{plist}");
-    assert!(plist.contains("com.example.codex-recall.watch"), "{plist}");
+    assert!(plist.contains("com.example.agent-recall.watch"), "{plist}");
     assert!(plist.contains("<string>watch</string>"), "{plist}");
     assert!(plist.contains("<string>--interval</string>"), "{plist}");
     assert!(plist.contains("<string>60</string>"), "{plist}");
@@ -2271,7 +2321,7 @@ fn watch_can_install_and_start_launch_agent_with_configurable_launchctl() {
     let source = temp.join("sessions");
     let db = temp.join("index.sqlite");
     let state = temp.join("watch-state.json");
-    let agent = temp.join("com.example.codex-recall.watch.plist");
+    let agent = temp.join("com.example.agent-recall.watch.plist");
     let launchctl_log = temp.join("launchctl.log");
     let fake_launchctl = temp.join("launchctl");
     fs::create_dir_all(&source).unwrap();
@@ -2291,15 +2341,15 @@ fn watch_can_install_and_start_launch_agent_with_configurable_launchctl() {
         .unwrap();
     assert!(chmod.status.success());
 
-    let install = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .env("CODEX_RECALL_LAUNCHCTL", &fake_launchctl)
-        .env("CODEX_RECALL_UID", "501")
+    let install = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .env("AGENT_RECALL_LAUNCHCTL", &fake_launchctl)
+        .env("AGENT_RECALL_UID", "501")
         .args([
             "watch",
             "--install-launch-agent",
             "--start-launch-agent",
             "--agent-label",
-            "com.example.codex-recall.watch",
+            "com.example.agent-recall.watch",
             "--agent-path",
         ])
         .arg(&agent)
@@ -2335,7 +2385,7 @@ fn watch_can_install_and_start_launch_agent_with_configurable_launchctl() {
     assert!(log.contains("bootstrap gui/501"), "{log}");
     assert!(log.contains(agent.to_str().unwrap()), "{log}");
     assert!(
-        log.contains("print gui/501/com.example.codex-recall.watch"),
+        log.contains("print gui/501/com.example.agent-recall.watch"),
         "{log}"
     );
 }
@@ -2351,7 +2401,7 @@ fn default_watch_install_retires_legacy_launch_agent() {
     let source = temp.join("sessions");
     let db = temp.join("index.sqlite");
     let state = temp.join("watch-state.json");
-    let agent = temp.join("dev.codex-recall.watch.plist");
+    let agent = temp.join("dev.agent-recall.watch.plist");
     let launchctl_log = temp.join("launchctl.log");
     let fake_launchctl = temp.join("launchctl");
     let legacy_agent = home
@@ -2377,9 +2427,9 @@ fn default_watch_install_retires_legacy_launch_agent() {
         .unwrap();
     assert!(chmod.status.success());
 
-    let install = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .env("CODEX_RECALL_LAUNCHCTL", &fake_launchctl)
-        .env("CODEX_RECALL_UID", "501")
+    let install = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .env("AGENT_RECALL_LAUNCHCTL", &fake_launchctl)
+        .env("AGENT_RECALL_UID", "501")
         .env("HOME", &home)
         .args([
             "watch",
@@ -2419,7 +2469,7 @@ fn default_watch_install_retires_legacy_launch_agent() {
     );
     assert!(log.contains("bootstrap gui/501"), "{log}");
     assert!(
-        log.contains("print gui/501/dev.codex-recall.watch"),
+        log.contains("print gui/501/dev.agent-recall.watch"),
         "{log}"
     );
 }
@@ -2432,7 +2482,7 @@ fn doctor_json_includes_freshness_verdict() {
     let state = temp.join("watch-state.json");
     write_sample_session(&source);
 
-    let doctor = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let doctor = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["doctor", "--json", "--db"])
         .arg(&db)
         .args(["--state"])
@@ -2473,7 +2523,7 @@ fn bundle_outputs_agent_ready_context() {
         "Stripe retries were caused by the missing webhook secret.",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -2482,7 +2532,7 @@ fn bundle_outputs_agent_ready_context() {
         .unwrap();
     assert!(index.status.success());
 
-    let bundle = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let bundle = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["bundle", "webhook secret", "--db"])
         .arg(&db)
         .args(["--limit", "2", "--repo", "payments"])
@@ -2495,13 +2545,13 @@ fn bundle_outputs_agent_ready_context() {
     );
 
     let stdout = String::from_utf8_lossy(&bundle.stdout);
-    assert!(stdout.contains("# codex-recall bundle"), "{stdout}");
+    assert!(stdout.contains("# agent-recall bundle"), "{stdout}");
     assert!(stdout.contains("Query: webhook secret"), "{stdout}");
     assert!(stdout.contains("## Top Sessions"), "{stdout}");
     assert!(stdout.contains("## Receipts"), "{stdout}");
     assert!(stdout.contains("revenuecat"), "{stdout}");
     assert!(stdout.contains("stripe"), "{stdout}");
-    assert!(stdout.contains("codex-recall show"), "{stdout}");
+    assert!(stdout.contains("agent-recall show"), "{stdout}");
 }
 
 #[test]
@@ -2528,7 +2578,7 @@ fn recent_lists_latest_sessions_with_filters() {
         "2026-04-13T03:00:00Z",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -2537,7 +2587,7 @@ fn recent_lists_latest_sessions_with_filters() {
         .unwrap();
     assert!(index.status.success());
 
-    let recent = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let recent = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "recent",
             "--repo",
@@ -2557,7 +2607,7 @@ fn recent_lists_latest_sessions_with_filters() {
 
     let stdout = String::from_utf8_lossy(&recent.stdout);
     assert!(stdout.contains("new-project"), "{stdout}");
-    assert!(stdout.contains("codex-recall show"), "{stdout}");
+    assert!(stdout.contains("agent-recall show"), "{stdout}");
     assert!(!stdout.contains("old-project"), "{stdout}");
     assert!(!stdout.contains("new-other"), "{stdout}");
 }
@@ -2604,7 +2654,7 @@ fn recent_filters_by_from_until_exclusion_and_dedupes_duplicates() {
     );
     index_sources(&db, &[&active, &archived]);
 
-    let recent = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let recent = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "recent",
             "--from",
@@ -2632,7 +2682,7 @@ fn recent_filters_by_from_until_exclusion_and_dedupes_duplicates() {
     assert!(!stdout.contains("excluded"), "{stdout}");
     assert!(!stdout.contains("too-new"), "{stdout}");
 
-    let duplicate_recent = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let duplicate_recent = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["recent", "--include-duplicates", "--db"])
         .arg(&db)
         .output()
@@ -2663,7 +2713,7 @@ fn recent_json_supports_day_and_kind_filter() {
     );
     index_sources(&db, &[&source]);
 
-    let recent = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let recent = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "recent",
             "--day",
@@ -2708,7 +2758,7 @@ fn recent_accepts_all_repos_for_search_parity() {
     );
     index_sources(&db, &[&source]);
 
-    let recent = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let recent = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .current_dir(&workspace)
         .args(["recent", "--all-repos", "--db"])
         .arg(&db)
@@ -2739,7 +2789,7 @@ fn show_json_supports_kind_filter() {
     );
     index_sources(&db, &[&source]);
 
-    let show = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let show = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["show", "mixed-session", "--kind", "user", "--json", "--db"])
         .arg(&db)
         .output()
@@ -2781,7 +2831,7 @@ fn day_json_outputs_session_inventory() {
     );
     index_sources(&db, &[&source]);
 
-    let day = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let day = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["day", "2026-04-13", "--json", "--db"])
         .arg(&db)
         .output()
@@ -2811,7 +2861,7 @@ fn pin_stores_durable_session_anchor_and_pins_filters_it() {
         &source,
         "watcher.jsonl",
         "watcher-session",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T02:00:00Z",
         "LaunchAgent watcher freshness decision.",
     );
@@ -2824,7 +2874,7 @@ fn pin_stores_durable_session_anchor_and_pins_filters_it() {
         "Different project decision.",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -2833,7 +2883,7 @@ fn pin_stores_durable_session_anchor_and_pins_filters_it() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "watcher freshness", "--json", "--db"])
         .arg(&db)
         .output()
@@ -2842,7 +2892,7 @@ fn pin_stores_durable_session_anchor_and_pins_filters_it() {
     let json: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
     let session_key = json["results"][0]["session_key"].as_str().unwrap();
 
-    let pin = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let pin = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["pin", session_key, "--label", "watcher design", "--db"])
         .arg(&db)
         .args(["--pins"])
@@ -2856,8 +2906,8 @@ fn pin_stores_durable_session_anchor_and_pins_filters_it() {
     );
     assert!(String::from_utf8_lossy(&pin.stdout).contains("pinned watcher-session"));
 
-    let pins_output = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .args(["pins", "--repo", "codex-recall", "--pins"])
+    let pins_output = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .args(["pins", "--repo", "agent-recall", "--pins"])
         .arg(&pins)
         .output()
         .unwrap();
@@ -2870,7 +2920,7 @@ fn pin_stores_durable_session_anchor_and_pins_filters_it() {
     let stdout = String::from_utf8_lossy(&pins_output.stdout);
     assert!(stdout.contains("watcher design"), "{stdout}");
     assert!(stdout.contains("watcher-session"), "{stdout}");
-    assert!(stdout.contains("codex-recall show"), "{stdout}");
+    assert!(stdout.contains("agent-recall show"), "{stdout}");
     assert!(!stdout.contains("other-session"), "{stdout}");
 
     let pins_json = fs::read_to_string(&pins).unwrap();
@@ -2889,12 +2939,12 @@ fn pins_filter_by_command_cwd_repo_membership() {
     fs::write(
         session_dir.join("mixed-repo.jsonl"),
         r#"{"timestamp":"2026-04-13T01:00:00Z","type":"session_meta","payload":{"id":"mixed-repo","timestamp":"2026-04-13T01:00:00Z","cwd":"/Users/me/notes-vault","cli_version":"0.1.0"}}
-{"timestamp":"2026-04-13T01:00:01Z","type":"event_msg","payload":{"type":"exec_command_end","command":["/bin/zsh","-lc","cargo test"],"cwd":"/Users/me/projects/codex-recall","exit_code":0,"aggregated_output":"watcher freshness tested"}}
+{"timestamp":"2026-04-13T01:00:01Z","type":"event_msg","payload":{"type":"exec_command_end","command":["/bin/zsh","-lc","cargo test"],"cwd":"/Users/me/projects/agent-recall","exit_code":0,"aggregated_output":"watcher freshness tested"}}
 "#,
     )
     .unwrap();
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -2903,7 +2953,7 @@ fn pins_filter_by_command_cwd_repo_membership() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "watcher freshness", "--json", "--db"])
         .arg(&db)
         .output()
@@ -2912,7 +2962,7 @@ fn pins_filter_by_command_cwd_repo_membership() {
     let json: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
     let session_key = json["results"][0]["session_key"].as_str().unwrap();
 
-    let pin = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let pin = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["pin", session_key, "--label", "mixed repo", "--db"])
         .arg(&db)
         .args(["--pins"])
@@ -2921,15 +2971,15 @@ fn pins_filter_by_command_cwd_repo_membership() {
         .unwrap();
     assert!(pin.status.success());
 
-    let pins_output = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .args(["pins", "--repo", "codex-recall", "--pins"])
+    let pins_output = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .args(["pins", "--repo", "agent-recall", "--pins"])
         .arg(&pins)
         .output()
         .unwrap();
     assert!(pins_output.status.success());
     let stdout = String::from_utf8_lossy(&pins_output.stdout);
     assert!(stdout.contains("mixed repo"), "{stdout}");
-    assert!(stdout.contains("codex-recall"), "{stdout}");
+    assert!(stdout.contains("agent-recall"), "{stdout}");
 }
 
 #[test]
@@ -2942,12 +2992,12 @@ fn pins_json_outputs_machine_readable_pin_records() {
         &source,
         "watcher.jsonl",
         "watcher-session",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T02:00:00Z",
         "LaunchAgent watcher freshness decision.",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -2956,7 +3006,7 @@ fn pins_json_outputs_machine_readable_pin_records() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "watcher freshness", "--json", "--db"])
         .arg(&db)
         .output()
@@ -2965,7 +3015,7 @@ fn pins_json_outputs_machine_readable_pin_records() {
     let json: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
     let session_key = json["results"][0]["session_key"].as_str().unwrap();
 
-    let pin = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let pin = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["pin", session_key, "--label", "watcher design", "--db"])
         .arg(&db)
         .args(["--pins"])
@@ -2974,8 +3024,8 @@ fn pins_json_outputs_machine_readable_pin_records() {
         .unwrap();
     assert!(pin.status.success());
 
-    let pins_output = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-        .args(["pins", "--repo", "codex-recall", "--json", "--pins"])
+    let pins_output = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+        .args(["pins", "--repo", "agent-recall", "--json", "--pins"])
         .arg(&pins)
         .output()
         .unwrap();
@@ -2991,7 +3041,7 @@ fn pins_json_outputs_machine_readable_pin_records() {
     assert_eq!(json["pins"][0]["session_id"], "watcher-session");
     assert_eq!(
         json["pins"][0]["show_command"],
-        format!("codex-recall show '{session_key}' --limit 120")
+        format!("agent-recall show '{session_key}' --limit 120")
     );
 }
 
@@ -3005,12 +3055,12 @@ fn unpin_removes_existing_pin() {
         &source,
         "watcher.jsonl",
         "watcher-session",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T02:00:00Z",
         "LaunchAgent watcher freshness decision.",
     );
 
-    let index = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let index = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(&db)
         .args(["--source"])
@@ -3019,7 +3069,7 @@ fn unpin_removes_existing_pin() {
         .unwrap();
     assert!(index.status.success());
 
-    let search = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let search = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["search", "watcher freshness", "--json", "--db"])
         .arg(&db)
         .output()
@@ -3028,7 +3078,7 @@ fn unpin_removes_existing_pin() {
     let json: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
     let session_key = json["results"][0]["session_key"].as_str().unwrap();
 
-    let pin = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let pin = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["pin", session_key, "--label", "watcher design", "--db"])
         .arg(&db)
         .args(["--pins"])
@@ -3037,7 +3087,7 @@ fn unpin_removes_existing_pin() {
         .unwrap();
     assert!(pin.status.success());
 
-    let unpin = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let unpin = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["unpin", session_key, "--pins"])
         .arg(&pins)
         .output()
@@ -3049,7 +3099,7 @@ fn unpin_removes_existing_pin() {
     );
     assert!(String::from_utf8_lossy(&unpin.stdout).contains("unpinned watcher-session"));
 
-    let pins_output = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let pins_output = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["pins", "--json", "--pins"])
         .arg(&pins)
         .output()

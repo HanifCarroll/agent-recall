@@ -112,7 +112,7 @@ pub fn run_doctor(args: DoctorArgs) -> Result<()> {
             let status = if source.exists() { "exists" } else { "missing" };
             println!("source: {} ({status})", source.display());
         }
-        println!("next: run codex-recall index");
+        println!("next: run agent-recall index");
         return Ok(());
     }
 

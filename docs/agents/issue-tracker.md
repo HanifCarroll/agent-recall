@@ -5,7 +5,7 @@ This repo tracks executable software work in GitHub Issues.
 | Field | Value |
 | --- | --- |
 | Tracker | GitHub Issues |
-| Remote | `git@github.com:HanifCarroll/codex-recall.git` |
+| Remote | `git@github.com:HanifCarroll/agent-recall.git` |
 | CLI | `gh` |
 
 When a Matt Pocock skill says to publish to the issue tracker, use GitHub Issues for this repo.

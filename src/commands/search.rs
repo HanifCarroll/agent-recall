@@ -61,7 +61,7 @@ pub struct SearchArgs {
         help = "Exclude a session id or session key; repeatable"
     )]
     pub exclude_sessions: Vec<String>,
-    #[arg(long, help = "Exclude the current Codex session from results")]
+    #[arg(long, help = "Exclude the current agent session from results")]
     pub exclude_current: bool,
     #[arg(long, help = "Emit machine-readable JSON")]
     pub json: bool,
@@ -119,7 +119,7 @@ pub struct BundleArgs {
         help = "Exclude a session id or session key; repeatable"
     )]
     pub exclude_sessions: Vec<String>,
-    #[arg(long, help = "Exclude the current Codex session from results")]
+    #[arg(long, help = "Exclude the current agent session from results")]
     pub exclude_current: bool,
 }
 
@@ -269,11 +269,15 @@ pub fn run_show(args: ShowArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("{}  {}", session.session_key, session.session_id);
+    println!(
+        "[{}] {}  {}",
+        session.source_kind, session.session_key, session.session_id
+    );
     println!("{}", events[0].cwd);
     for event in events {
         println!(
-            "\n{}  {}:{}",
+            "\n[{}] {}  {}:{}",
+            event.source_kind,
             event.kind.as_str(),
             event.source_file_path.display(),
             event.source_line_number
@@ -305,15 +309,17 @@ fn print_grouped_search_results(results: &[SearchResult], limit: usize) {
             .collect::<Vec<_>>();
         let first = session_results[0];
         println!(
-            "{}. {}  {}  {}",
+            "{}. [{}] {}  {}  {}",
             index + 1,
+            first.source_kind,
             first.session_key,
             first.session_id,
             first.cwd
         );
         for result in session_results.iter().take(3) {
             println!(
-                "   - {}  {}:{}",
+                "   - [{}] {}  {}:{}",
+                result.source_kind,
                 result.kind.as_str(),
                 result.source_file_path.display(),
                 result.source_line_number
@@ -343,7 +349,7 @@ fn print_bundle(
     filters: BundleFilters<'_>,
     results: &[SearchResult],
 ) {
-    println!("# codex-recall bundle");
+    println!("# agent-recall bundle");
     println!();
     println!("Query: {query}");
     println!("Database: {}", db_path.display());
@@ -369,15 +375,16 @@ fn print_bundle(
             .collect::<Vec<_>>();
         let first = session_results[0];
         println!(
-            "{}. {}  {}  {}",
+            "{}. [{}] {}  {}  {}",
             index + 1,
+            first.source_kind,
             first.session_key,
             first.session_id,
             first.cwd
         );
         println!("   when: {}", first.session_timestamp);
         println!(
-            "   show: codex-recall show {} --limit 120",
+            "   show: agent-recall show {} --limit 120",
             shell_quote(&first.session_key)
         );
         println!("   receipts: {}", session_results.len().min(3));
@@ -394,7 +401,8 @@ fn print_bundle(
             .take(3)
         {
             println!(
-                "- {}  {}:{}",
+                "- [{}] {}  {}:{}",
+                result.source_kind,
                 result.kind.as_str(),
                 result.source_file_path.display(),
                 result.source_line_number
@@ -407,7 +415,7 @@ fn print_bundle(
     println!("## Next Commands");
     for session_key in session_keys {
         println!(
-            "- codex-recall show {} --limit 120",
+            "- agent-recall show {} --limit 120",
             shell_quote(session_key)
         );
     }
@@ -478,6 +486,8 @@ fn print_show_json(
             );
             json!({
                 "kind": event.kind.as_str(),
+                "source_kind": event.source_kind,
+                "source_label": event.source_label,
                 "text": event.text,
                 "cwd": event.cwd,
                 "source_file_path": event.source_file_path,
@@ -496,6 +506,8 @@ fn print_show_json(
         "source_file_path": session.source_file_path,
         "count": events.len(),
         "events": events,
+        "source_kind": session.source_kind,
+        "source_label": session.source_label,
     });
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
@@ -519,6 +531,8 @@ fn print_search_json(
                 "session_key": result.session_key,
                 "session_id": result.session_id,
                 "repo": result.repo,
+                "source_kind": result.source_kind,
+                "source_label": result.source_label,
                 "kind": result.kind.as_str(),
                 "cwd": result.cwd,
                 "session_timestamp": result.session_timestamp,

@@ -1,5 +1,6 @@
 use crate::redact::redact_secrets;
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs::File;
@@ -25,6 +26,42 @@ pub struct SessionMetadata {
     pub cwd: String,
     pub cli_version: Option<String>,
     pub source_file_path: PathBuf,
+    pub source_kind: SourceKind,
+    pub source_label: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    Codex,
+    CodexLog,
+    Omp,
+    Pi,
+    Claude,
+    Unknown,
+}
+
+impl SourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceKind::Codex => "codex",
+            SourceKind::CodexLog => "codex-log",
+            SourceKind::Omp => "omp",
+            SourceKind::Pi => "pi",
+            SourceKind::Claude => "claude",
+            SourceKind::Unknown => "unknown",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SourceKind::Codex => "Codex",
+            SourceKind::CodexLog => "Codex Log",
+            SourceKind::Omp => "OMP",
+            SourceKind::Pi => "Pi",
+            SourceKind::Claude => "Claude",
+            SourceKind::Unknown => "Unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +83,47 @@ pub enum EventKind {
     UserMessage,
     AssistantMessage,
     Command,
+    Tool,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompactRecord {
+    #[serde(rename = "type")]
+    type_name: Option<String>,
+    timestamp: Option<String>,
+    payload: Option<Value>,
+    id: Option<String>,
+    cwd: Option<String>,
+    project: Option<String>,
+    #[serde(rename = "sessionId")]
+    session_id_camel: Option<String>,
+    session_id: Option<String>,
+    message: Option<CompactMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompactMessage {
+    role: Option<String>,
+    content: Option<CompactContent>,
+    #[serde(rename = "toolName")]
+    tool_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum CompactContent {
+    Text(String),
+    Parts(Vec<CompactContentPart>),
+}
+
+#[derive(Debug, Deserialize)]
+struct CompactContentPart {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    text: Option<String>,
+    content: Option<Box<CompactContent>>,
+    name: Option<String>,
+    tool_name: Option<String>,
 }
 
 impl EventKind {
@@ -54,6 +132,7 @@ impl EventKind {
             EventKind::UserMessage => "user_message",
             EventKind::AssistantMessage => "assistant_message",
             EventKind::Command => "command",
+            EventKind::Tool => "tool",
         }
     }
 
@@ -62,6 +141,7 @@ impl EventKind {
             "user_message" => Some(EventKind::UserMessage),
             "assistant_message" => Some(EventKind::AssistantMessage),
             "command" => Some(EventKind::Command),
+            "tool" => Some(EventKind::Tool),
             _ => None,
         }
     }
@@ -78,7 +158,8 @@ impl FromStr for EventKind {
 pub fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>> {
     let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let reader = BufReader::new(file);
-    let mut session = None;
+    let mut session: Option<SessionMetadata> = None;
+    let mut inferred_session: Option<SessionMetadata> = None;
     let mut pending_events = Vec::new();
 
     for (index, line) in reader.lines().enumerate() {
@@ -88,35 +169,66 @@ pub fn parse_session_file(path: &Path) -> Result<Option<ParsedSession>> {
             continue;
         }
 
-        let record: Value = serde_json::from_str(&line)
-            .with_context(|| format!("parse json {}:{line_number}", path.display()))?;
-        let top_type = record
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let source_timestamp = record
-            .get("timestamp")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let payload = record.get("payload").unwrap_or(&Value::Null);
+        let Ok(record) = serde_json::from_str::<CompactRecord>(&line) else {
+            continue;
+        };
+        let top_type = record.type_name.as_deref().unwrap_or_default();
+        let source_timestamp = record.timestamp.clone();
+        let payload = record.payload.as_ref().unwrap_or(&Value::Null);
 
         if top_type == "session_meta" {
             session = parse_session_meta(payload, path);
             continue;
         }
+        if top_type == "session" {
+            session = parse_compact_session_meta(&record, path);
+            continue;
+        }
+        if let Some(candidate) = infer_compact_session_meta(&record, path) {
+            let should_replace = match &inferred_session {
+                Some(session) => session.cwd.is_empty() && !candidate.cwd.is_empty(),
+                None => true,
+            };
+            if should_replace {
+                inferred_session = Some(candidate);
+            }
+        }
 
-        if let Some(event) = parse_event(
-            top_type,
-            payload,
-            path,
-            line_number,
-            source_timestamp.as_deref(),
-        ) {
+        let event = match top_type {
+            "message" => record.message.as_ref().and_then(|message| {
+                parse_compact_v3_message_event(
+                    message,
+                    record.cwd.as_deref(),
+                    path,
+                    line_number,
+                    source_timestamp.as_deref(),
+                )
+            }),
+            "user" | "assistant" => record.message.as_ref().and_then(|message| {
+                parse_compact_claude_message_event(
+                    top_type,
+                    message,
+                    record.cwd.as_deref(),
+                    path,
+                    line_number,
+                    source_timestamp.as_deref(),
+                )
+            }),
+            _ => parse_event(
+                top_type,
+                &Value::Null,
+                payload,
+                path,
+                line_number,
+                source_timestamp.as_deref(),
+            ),
+        };
+        if let Some(event) = event {
             pending_events.push(event);
         }
     }
 
-    let Some(session) = session else {
+    let Some(session) = session.or(inferred_session) else {
         return Ok(None);
     };
 
@@ -155,17 +267,91 @@ fn parse_session_meta(payload: &Value, path: &Path) -> Option<SessionMetadata> {
         .and_then(Value::as_str)
         .map(str::to_owned);
 
-    Some(SessionMetadata {
+    Some(session_metadata(id, timestamp, cwd, cli_version, path))
+}
+
+fn parse_compact_session_meta(record: &CompactRecord, path: &Path) -> Option<SessionMetadata> {
+    Some(session_metadata(
+        record.id.as_ref()?.to_owned(),
+        record.timestamp.clone().unwrap_or_default(),
+        record.cwd.clone().unwrap_or_default(),
+        None,
+        path,
+    ))
+}
+
+fn infer_compact_session_meta(record: &CompactRecord, path: &Path) -> Option<SessionMetadata> {
+    let id = record
+        .session_id_camel
+        .as_ref()
+        .or(record.session_id.as_ref())?
+        .to_owned();
+    let cwd = record
+        .cwd
+        .as_ref()
+        .or(record.project.as_ref())
+        .cloned()
+        .unwrap_or_default();
+
+    Some(session_metadata(
+        id,
+        record.timestamp.clone().unwrap_or_default(),
+        cwd,
+        None,
+        path,
+    ))
+}
+
+fn session_metadata(
+    id: String,
+    timestamp: String,
+    cwd: String,
+    cli_version: Option<String>,
+    path: &Path,
+) -> SessionMetadata {
+    let source_kind = source_kind_for_path(path);
+    SessionMetadata {
         id,
         timestamp,
         cwd,
         cli_version,
         source_file_path: path.to_path_buf(),
-    })
+        source_kind,
+        source_label: source_kind.label().to_owned(),
+    }
+}
+
+pub fn source_kind_for_path(path: &Path) -> SourceKind {
+    let components = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    if has_component_pair(&components, ".claude", "projects")
+        || has_component_pair(&components, ".claude", "sessions")
+    {
+        SourceKind::Claude
+    } else if has_component_pair(&components, ".omp", "agent") {
+        SourceKind::Omp
+    } else if has_component_pair(&components, ".pi", "agent") {
+        SourceKind::Pi
+    } else if has_component_pair(&components, ".codex", "archived_logs") {
+        SourceKind::CodexLog
+    } else if components.contains(&".codex") {
+        SourceKind::Codex
+    } else {
+        SourceKind::Unknown
+    }
+}
+
+fn has_component_pair(components: &[&str], first: &str, second: &str) -> bool {
+    components
+        .windows(2)
+        .any(|window| window[0] == first && window[1] == second)
 }
 
 fn parse_event(
     top_type: &str,
+    record: &Value,
     payload: &Value,
     path: &Path,
     source_line_number: usize,
@@ -219,8 +405,352 @@ fn parse_event(
                 source_timestamp,
             )
         }
+        _ if top_type == "message" => {
+            parse_v3_message_event(record, path, source_line_number, source_timestamp)
+        }
+        _ if top_type == "user" || top_type == "assistant" => {
+            parse_claude_message_event(record, path, source_line_number, source_timestamp)
+        }
         _ => None,
     }
+}
+
+fn parse_compact_v3_message_event(
+    message: &CompactMessage,
+    cwd: Option<&str>,
+    path: &Path,
+    source_line_number: usize,
+    source_timestamp: Option<&str>,
+) -> Option<ParsedEvent> {
+    let role = message.role.as_deref()?;
+    match role {
+        "user" => {
+            let text = compact_content_text(message.content.as_ref()?)?;
+            non_empty_text_event(
+                EventKind::UserMessage,
+                Some("user"),
+                text.trim(),
+                path,
+                source_line_number,
+                source_timestamp,
+            )
+        }
+        "assistant" => {
+            if let Some(text) = message.content.as_ref().and_then(compact_content_text) {
+                return non_empty_text_event(
+                    EventKind::AssistantMessage,
+                    Some("assistant"),
+                    text.trim(),
+                    path,
+                    source_line_number,
+                    source_timestamp,
+                );
+            }
+            let tool_name = message.content.as_ref().and_then(compact_tool_call_name)?;
+            parse_tool_event(
+                &tool_name,
+                None,
+                cwd,
+                path,
+                source_line_number,
+                source_timestamp,
+            )
+        }
+        "toolResult" => {
+            let tool_name = message.tool_name.as_deref().unwrap_or("tool");
+            let output = message.content.as_ref().and_then(compact_content_text);
+            parse_tool_event(
+                tool_name,
+                output.as_deref(),
+                cwd,
+                path,
+                source_line_number,
+                source_timestamp,
+            )
+        }
+        _ => None,
+    }
+}
+
+fn parse_compact_claude_message_event(
+    top_type: &str,
+    message: &CompactMessage,
+    cwd: Option<&str>,
+    path: &Path,
+    source_line_number: usize,
+    source_timestamp: Option<&str>,
+) -> Option<ParsedEvent> {
+    let role = message.role.as_deref().unwrap_or(top_type);
+    let content = message.content.as_ref()?;
+    if role == "assistant" {
+        if let Some(text) = compact_content_text(content) {
+            return non_empty_text_event(
+                EventKind::AssistantMessage,
+                Some("assistant"),
+                text.trim(),
+                path,
+                source_line_number,
+                source_timestamp,
+            );
+        }
+        let tool_name = compact_tool_call_name(content)?;
+        return parse_tool_event(
+            &tool_name,
+            None,
+            cwd,
+            path,
+            source_line_number,
+            source_timestamp,
+        );
+    }
+
+    if let Some((tool_name, output)) = compact_claude_tool_result(content) {
+        return parse_tool_event(
+            &tool_name,
+            output.as_deref(),
+            cwd,
+            path,
+            source_line_number,
+            source_timestamp,
+        );
+    }
+
+    let text = compact_content_text(content)?;
+    non_empty_text_event(
+        EventKind::UserMessage,
+        Some("user"),
+        text.trim(),
+        path,
+        source_line_number,
+        source_timestamp,
+    )
+}
+
+fn parse_v3_message_event(
+    record: &Value,
+    path: &Path,
+    source_line_number: usize,
+    source_timestamp: Option<&str>,
+) -> Option<ParsedEvent> {
+    let message = record.get("message")?;
+    let role = message.get("role").and_then(Value::as_str)?;
+    match role {
+        "user" => {
+            let text = extract_content_text(message.get("content")?)?;
+            non_empty_text_event(
+                EventKind::UserMessage,
+                Some("user"),
+                text.trim(),
+                path,
+                source_line_number,
+                source_timestamp,
+            )
+        }
+        "assistant" => {
+            if let Some(text) = extract_content_text(message.get("content")?) {
+                return non_empty_text_event(
+                    EventKind::AssistantMessage,
+                    Some("assistant"),
+                    text.trim(),
+                    path,
+                    source_line_number,
+                    source_timestamp,
+                );
+            }
+            let tool_name = extract_tool_call_name(message.get("content")?)?;
+            parse_tool_event(
+                &tool_name,
+                None,
+                record.get("cwd").and_then(Value::as_str),
+                path,
+                source_line_number,
+                source_timestamp,
+            )
+        }
+        "toolResult" => {
+            let tool_name = message
+                .get("toolName")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
+            let output = message.get("content").and_then(extract_content_text);
+            parse_tool_event(
+                tool_name,
+                output.as_deref(),
+                record.get("cwd").and_then(Value::as_str),
+                path,
+                source_line_number,
+                source_timestamp,
+            )
+        }
+        _ => None,
+    }
+}
+
+fn parse_claude_message_event(
+    record: &Value,
+    path: &Path,
+    source_line_number: usize,
+    source_timestamp: Option<&str>,
+) -> Option<ParsedEvent> {
+    let message = record.get("message")?;
+    let role = message.get("role").and_then(Value::as_str)?;
+    let content = message.get("content")?;
+    if role == "assistant" {
+        if let Some(text) = extract_content_text(content) {
+            return non_empty_text_event(
+                EventKind::AssistantMessage,
+                Some("assistant"),
+                text.trim(),
+                path,
+                source_line_number,
+                source_timestamp,
+            );
+        }
+        let tool_name = extract_tool_call_name(content)?;
+        return parse_tool_event(
+            &tool_name,
+            None,
+            record.get("cwd").and_then(Value::as_str),
+            path,
+            source_line_number,
+            source_timestamp,
+        );
+    }
+
+    if let Some((tool_name, output)) = extract_claude_tool_result(content) {
+        return parse_tool_event(
+            &tool_name,
+            output.as_deref(),
+            record.get("cwd").and_then(Value::as_str),
+            path,
+            source_line_number,
+            source_timestamp,
+        );
+    }
+
+    let text = extract_content_text(content)?;
+    non_empty_text_event(
+        EventKind::UserMessage,
+        Some("user"),
+        text.trim(),
+        path,
+        source_line_number,
+        source_timestamp,
+    )
+}
+
+fn parse_tool_event(
+    tool_name: &str,
+    output: Option<&str>,
+    cwd: Option<&str>,
+    path: &Path,
+    source_line_number: usize,
+    source_timestamp: Option<&str>,
+) -> Option<ParsedEvent> {
+    let tool_name = tool_name.trim();
+    if tool_name.is_empty() {
+        return None;
+    }
+    let redacted_tool_name = redact_secrets(tool_name);
+    let mut text = format!("$ {redacted_tool_name}");
+    if let Some(output) = output.filter(|value| !value.trim().is_empty()) {
+        text.push('\n');
+        let capped_output = cap_text(output, COMMAND_OUTPUT_REDACTION_WINDOW);
+        text.push_str(&cap_text(
+            &redact_secrets(&capped_output),
+            COMMAND_OUTPUT_LIMIT,
+        ));
+    }
+
+    Some(ParsedEvent {
+        session_id: String::new(),
+        kind: EventKind::Tool,
+        role: None,
+        text,
+        command: Some(redacted_tool_name),
+        cwd: cwd.map(str::to_owned),
+        exit_code: None,
+        source_timestamp: source_timestamp.map(str::to_owned),
+        source_file_path: path.to_path_buf(),
+        source_line_number,
+    })
+}
+
+fn extract_tool_call_name(content: &Value) -> Option<String> {
+    let parts = content.as_array()?;
+    parts
+        .iter()
+        .find_map(|part| match part.get("type").and_then(Value::as_str) {
+            Some("toolCall") | Some("tool_call") | Some("tool_use") => {
+                part.get("name").and_then(Value::as_str).map(str::to_owned)
+            }
+            _ => None,
+        })
+}
+
+fn extract_claude_tool_result(content: &Value) -> Option<(String, Option<String>)> {
+    let parts = content.as_array()?;
+    let part = parts
+        .iter()
+        .find(|part| part.get("type").and_then(Value::as_str) == Some("tool_result"))?;
+    let tool_name = part
+        .get("tool_name")
+        .or_else(|| part.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("tool")
+        .to_owned();
+    let output = part.get("content").and_then(extract_content_text);
+    Some((tool_name, output))
+}
+fn compact_tool_call_name(content: &CompactContent) -> Option<String> {
+    let CompactContent::Parts(parts) = content else {
+        return None;
+    };
+    parts.iter().find_map(|part| match part.kind.as_deref() {
+        Some("toolCall") | Some("tool_call") | Some("tool_use") => part.name.clone(),
+        _ => None,
+    })
+}
+
+fn compact_claude_tool_result(content: &CompactContent) -> Option<(String, Option<String>)> {
+    let CompactContent::Parts(parts) = content else {
+        return None;
+    };
+    let part = parts
+        .iter()
+        .find(|part| part.kind.as_deref() == Some("tool_result"))?;
+    let tool_name = part
+        .tool_name
+        .as_ref()
+        .or(part.name.as_ref())
+        .cloned()
+        .unwrap_or_else(|| "tool".to_owned());
+    let output = part.content.as_deref().and_then(compact_content_text);
+    Some((tool_name, output))
+}
+
+fn compact_content_text(content: &CompactContent) -> Option<String> {
+    match content {
+        CompactContent::Text(text) => non_empty_owned(text),
+        CompactContent::Parts(parts) => {
+            let text = parts
+                .iter()
+                .filter_map(compact_content_part_text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            non_empty_owned(&text)
+        }
+    }
+}
+
+fn compact_content_part_text(part: &CompactContentPart) -> Option<String> {
+    if let Some(text) = &part.text {
+        return non_empty_owned(text);
+    }
+    if let Some(content) = &part.content {
+        return compact_content_text(content);
+    }
+    None
 }
 
 fn non_empty_text_event(
@@ -327,17 +857,38 @@ fn extract_command(value: &Value) -> Option<String> {
 }
 
 fn extract_content_text(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        return non_empty_owned(text);
+    }
+
     let parts = content.as_array()?;
     let text = parts
         .iter()
-        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .filter_map(content_part_text)
         .collect::<Vec<_>>()
         .join("\n");
 
+    non_empty_owned(&text)
+}
+
+fn content_part_text(part: &Value) -> Option<String> {
+    if let Some(text) = part.as_str() {
+        return non_empty_owned(text);
+    }
+    if let Some(text) = part.get("text").and_then(Value::as_str) {
+        return non_empty_owned(text);
+    }
+    if let Some(content) = part.get("content") {
+        return extract_content_text(content);
+    }
+    None
+}
+
+fn non_empty_owned(text: &str) -> Option<String> {
     if text.trim().is_empty() {
         None
     } else {
-        Some(text)
+        Some(text.to_owned())
     }
 }
 
@@ -372,7 +923,7 @@ mod tests {
 
     fn temp_jsonl(name: &str, contents: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "codex-recall-parser-test-{}-{}",
+            "agent-recall-parser-test-{}-{}",
             std::process::id(),
             name
         ));
@@ -380,6 +931,24 @@ mod tests {
         let path = dir.join("session.jsonl");
         fs::write(&path, contents).unwrap();
         path
+    }
+
+    #[test]
+    fn skips_malformed_json_lines_inside_transcripts() {
+        let path = temp_jsonl(
+            "malformed-line",
+            r#"{"timestamp":"2026-04-13T01:00:00Z","type":"session_meta","payload":{"id":"session-malformed","timestamp":"2026-04-13T01:00:00Z","cwd":"/tmp"}}
+{"timestamp":"2026-04-13T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"Before malformed line"}}
+{"timestamp":"bad \u"}
+{"timestamp":"2026-04-13T01:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"After malformed line"}}
+"#,
+        );
+
+        let parsed = parse_session_file(&path).unwrap().unwrap();
+
+        assert_eq!(parsed.events.len(), 2);
+        assert_eq!(parsed.events[0].text, "Before malformed line");
+        assert_eq!(parsed.events[1].text, "After malformed line");
     }
 
     #[test]
@@ -462,7 +1031,7 @@ mod tests {
         let path = temp_jsonl(
             "argv-command",
             r#"{"timestamp":"2026-04-13T01:00:00Z","type":"session_meta","payload":{"id":"session-5","timestamp":"2026-04-13T01:00:00Z","cwd":"/Users/me/notes-vault"}}
-{"timestamp":"2026-04-13T01:00:01Z","type":"event_msg","payload":{"type":"exec_command_end","command":["/bin/zsh","-lc","cargo test"],"cwd":"/Users/me/projects/codex-recall","exit_code":0,"aggregated_output":"test result: ok"}}
+{"timestamp":"2026-04-13T01:00:01Z","type":"event_msg","payload":{"type":"exec_command_end","command":["/bin/zsh","-lc","cargo test"],"cwd":"/Users/me/projects/agent-recall","exit_code":0,"aggregated_output":"test result: ok"}}
 "#,
         );
 
@@ -473,7 +1042,7 @@ mod tests {
         assert_eq!(parsed.events[0].command.as_deref(), Some("cargo test"));
         assert_eq!(
             parsed.events[0].cwd.as_deref(),
-            Some("/Users/me/projects/codex-recall")
+            Some("/Users/me/projects/agent-recall")
         );
         assert!(parsed.events[0].text.contains("test result: ok"));
     }
@@ -529,5 +1098,84 @@ mod tests {
         assert_eq!(parsed.events.len(), 1);
         assert!(parsed.events[0].text.len() <= MESSAGE_TEXT_LIMIT + "[truncated]".len() + 1);
         assert!(parsed.events[0].text.contains("[truncated]"));
+    }
+
+    #[test]
+    fn parses_omp_v3_messages_and_tool_results() {
+        let root = std::env::temp_dir()
+            .join(format!(
+                "agent-recall-parser-test-{}-omp",
+                std::process::id()
+            ))
+            .join(".omp")
+            .join("agent")
+            .join("sessions")
+            .join("-tmp");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("session.jsonl");
+        fs::write(
+            &path,
+            r#"{"type":"session","version":3,"id":"omp-1","timestamp":"2026-06-13T21:22:36.081Z","cwd":"/Users/me/project"}
+{"type":"message","timestamp":"2026-06-13T21:22:54.923Z","message":{"role":"user","content":[{"type":"text","text":"Check OMP recall"}]}}
+{"type":"message","timestamp":"2026-06-13T21:23:03.779Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"do not index this"},{"type":"text","text":"I will check it."}]}}
+{"type":"message","timestamp":"2026-06-13T21:23:08.132Z","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"session file contents"}]}}
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_session_file(&path).unwrap().unwrap();
+
+        assert_eq!(parsed.session.source_kind, SourceKind::Omp);
+        assert_eq!(parsed.events.len(), 3);
+        assert_eq!(parsed.events[0].kind, EventKind::UserMessage);
+        assert_eq!(parsed.events[1].kind, EventKind::AssistantMessage);
+        assert_eq!(parsed.events[1].text, "I will check it.");
+        assert_eq!(parsed.events[2].kind, EventKind::Tool);
+        assert_eq!(parsed.events[2].command.as_deref(), Some("read"));
+        assert!(parsed.events[2].text.contains("session file contents"));
+    }
+
+    #[test]
+    fn parses_claude_project_messages_and_tool_results() {
+        let root = std::env::temp_dir()
+            .join(format!(
+                "agent-recall-parser-test-{}-claude",
+                std::process::id()
+            ))
+            .join(".claude")
+            .join("projects")
+            .join("-Users-me-project");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("claude-1.jsonl");
+        fs::write(
+            &path,
+            r#"{"type":"user","message":{"role":"user","content":"Audit the report"},"timestamp":"2026-06-01T17:41:46.894Z","cwd":"/Users/me/project","sessionId":"claude-1","version":"2.1.160"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"do not index this"},{"type":"text","text":"I found the issue."}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"tool output"}]},"timestamp":"2026-06-01T17:41:56.209Z","cwd":"/Users/me/project","sessionId":"claude-1"}
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_session_file(&path).unwrap().unwrap();
+
+        assert_eq!(parsed.session.source_kind, SourceKind::Claude);
+        assert_eq!(parsed.session.id, "claude-1");
+        assert_eq!(parsed.events.len(), 3);
+        assert_eq!(parsed.events[0].kind, EventKind::UserMessage);
+        assert_eq!(parsed.events[1].kind, EventKind::AssistantMessage);
+        assert_eq!(parsed.events[1].text, "I found the issue.");
+        assert_eq!(parsed.events[2].kind, EventKind::Tool);
+        assert!(parsed.events[2].text.contains("tool output"));
+    }
+
+    #[test]
+    fn classifies_pi_paths_separately_from_omp() {
+        let pi_path =
+            PathBuf::from("/Users/me/.pi/agent/sessions/project/2026-06-01_session.jsonl");
+        let omp_path =
+            PathBuf::from("/Users/me/.omp/agent/sessions/project/2026-06-01_session.jsonl");
+
+        assert_eq!(source_kind_for_path(&pi_path), SourceKind::Pi);
+        assert_eq!(source_kind_for_path(&omp_path), SourceKind::Omp);
     }
 }

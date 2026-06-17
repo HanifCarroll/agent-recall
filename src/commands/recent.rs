@@ -47,7 +47,7 @@ pub struct RecentArgs {
         help = "Exclude a session id or session key; repeatable"
     )]
     pub exclude_sessions: Vec<String>,
-    #[arg(long, help = "Exclude the current Codex session from results")]
+    #[arg(long, help = "Exclude the current agent session from results")]
     pub exclude_current: bool,
     #[arg(long, help = "Emit machine-readable JSON")]
     pub json: bool,
@@ -79,7 +79,7 @@ pub struct DayArgs {
         help = "Exclude a session id or session key; repeatable"
     )]
     pub exclude_sessions: Vec<String>,
-    #[arg(long, help = "Exclude the current Codex session from results")]
+    #[arg(long, help = "Exclude the current agent session from results")]
     pub exclude_current: bool,
     #[arg(long, help = "Emit machine-readable JSON")]
     pub json: bool,
@@ -151,17 +151,22 @@ pub fn run_day(args: DayArgs) -> Result<()> {
 pub(crate) fn print_recent_sessions(sessions: &[RecentSession]) {
     for (index, session) in sessions.iter().enumerate() {
         println!(
-            "{}. {}  {}  {}",
+            "{}. [{}] {}  {}  {}",
             index + 1,
+            session.source_kind,
             session.session_key,
             session.session_id,
             session.repo
         );
         println!("   when: {}", session.session_timestamp);
         println!("   cwd: {}", session.cwd);
-        println!("   source: {}", session.source_file_path.display());
         println!(
-            "   show: codex-recall show {} --limit 120",
+            "   source: {} {}",
+            session.source_kind,
+            session.source_file_path.display()
+        );
+        println!(
+            "   show: agent-recall show {} --limit 120",
             shell_quote(&session.session_key)
         );
     }
@@ -207,10 +212,12 @@ fn sessions_json(sessions: &[RecentSession]) -> Vec<serde_json::Value> {
                 "session_key": session.session_key,
                 "session_id": session.session_id,
                 "repo": session.repo,
+                "source_kind": session.source_kind,
+                "source_label": session.source_label,
                 "cwd": session.cwd,
                 "session_timestamp": session.session_timestamp,
                 "source_file_path": session.source_file_path,
-                "show_command": format!("codex-recall show {} --limit 120", shell_quote(&session.session_key)),
+                "show_command": format!("agent-recall show {} --limit 120", shell_quote(&session.session_key)),
             })
         })
         .collect()

@@ -1,5 +1,6 @@
 use crate::commands::doctor::{run_doctor, run_stats, DoctorArgs, StatsArgs};
 use crate::commands::index::{run_index, run_rebuild, IndexArgs, RebuildArgs};
+use crate::commands::logs::{run_index_logs, IndexLogsArgs};
 use crate::commands::memory::{
     run_delta, run_eval, run_memories, run_memory_show, run_read_resource, run_related,
     run_resources, DeltaArgs, EvalArgs, MemoriesArgs, MemoryShowArgs, ReadResourceArgs,
@@ -15,7 +16,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(
     version,
-    about = "Local search and recall for Codex session JSONL archives"
+    about = "Local search and recall for agent sessions, including archived Codex log archives"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -24,8 +25,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Incrementally index Codex session archives.
+    /// Incrementally index agent session archives.
     Index(IndexArgs),
+    /// Optionally import archived Codex SQLite telemetry logs.
+    IndexLogs(IndexLogsArgs),
     /// Delete and rebuild the index from session archives.
     Rebuild(RebuildArgs),
     /// Continuously index stable pending session files.
@@ -69,9 +72,10 @@ enum Command {
 }
 
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
-    let cli = Cli::parse_from(std::iter::once("codex-recall".to_owned()).chain(args));
+    let cli = Cli::parse_from(std::iter::once("agent-recall".to_owned()).chain(args));
     match cli.command {
         Some(Command::Index(args)) => run_index(args),
+        Some(Command::IndexLogs(args)) => run_index_logs(args),
         Some(Command::Rebuild(args)) => run_rebuild(args),
         Some(Command::Watch(args)) => run_watch(args),
         Some(Command::Status(args)) => run_status(args),

@@ -1,4 +1,5 @@
 use crate::commands::date::{resolve_since, timestamp_key, CalendarDate, ResolvedSince};
+
 use crate::parser::parse_session_file;
 use crate::store::{build_session_key, repo_slug, Store};
 use anyhow::{Context, Result};
@@ -7,6 +8,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const INDEX_TRANSACTION_FILE_BATCH: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexReport {
@@ -79,10 +82,6 @@ impl IndexFilters {
     pub fn since_value(&self) -> Option<&str> {
         self.since.as_ref().map(|since| since.value.as_str())
     }
-
-    fn needs_parsed_session(&self) -> bool {
-        self.repo.is_some() || self.since.is_some()
-    }
 }
 
 pub fn index_sources(store: &Store, sources: &[PathBuf]) -> Result<IndexReport> {
@@ -140,7 +139,7 @@ pub fn scan_sources_for_pending_with_filters(
                 continue;
             }
 
-            if filters.needs_parsed_session() {
+            if filters_need_parsed_session_for_path(filters, &path) {
                 let parsed = match parse_session_file(&path) {
                     Ok(parsed) => parsed,
                     Err(error) if is_not_found_error(&error) => continue,
@@ -246,97 +245,144 @@ where
 
     on_progress(&report);
 
-    for path in files {
-        report.current_file = Some(path.clone());
+    let mut files_in_batch = 0usize;
+    let indexing_result = (|| -> Result<()> {
+        for path in files {
+            report.current_file = Some(path.clone());
 
-        let file_state = match FileState::from_path(&path) {
-            Ok(file_state) => file_state,
-            Err(error) if is_not_found_error(&error) => {
+            let file_state = match FileState::from_path(&path) {
+                Ok(file_state) => file_state,
+                Err(error) if is_not_found_error(&error) => {
+                    report.files_seen += 1;
+                    report.files_skipped += 1;
+                    report.skipped_missing += 1;
+                    if should_report_after_file(&report) {
+                        on_progress(&report);
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            report.bytes_seen = report
+                .bytes_seen
+                .saturating_add(file_state.source_file_size as u64);
+
+            if store.is_source_current(
+                &path,
+                file_state.source_file_mtime_ns,
+                file_state.source_file_size,
+            )? {
                 report.files_seen += 1;
                 report.files_skipped += 1;
-                report.skipped_missing += 1;
+                report.skipped_unchanged += 1;
                 if should_report_after_file(&report) {
                     on_progress(&report);
                 }
                 continue;
             }
-            Err(error) => return Err(error),
-        };
-        report.bytes_seen = report
-            .bytes_seen
-            .saturating_add(file_state.source_file_size as u64);
 
-        if store.is_source_current(
-            &path,
-            file_state.source_file_mtime_ns,
-            file_state.source_file_size,
-        )? {
+            on_progress(&report);
+
+            let parsed = match parse_session_file(&path) {
+                Ok(parsed) => parsed,
+                Err(error) if is_not_found_error(&error) => {
+                    report.files_seen += 1;
+                    report.files_skipped += 1;
+                    report.skipped_missing += 1;
+                    if should_report_after_file(&report) {
+                        on_progress(&report);
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+
+            if let Some(parsed) = parsed {
+                if !parsed_session_matches_filters(&parsed, filters) {
+                    report.files_seen += 1;
+                    report.files_skipped += 1;
+                    report.skipped_filtered += 1;
+                    if should_report_after_file(&report) {
+                        on_progress(&report);
+                    }
+                    continue;
+                }
+                let session_key =
+                    build_session_key(&parsed.session.id, &parsed.session.source_file_path);
+                report.events_indexed += parsed.events.len();
+                ensure_open_index_batch(store, &mut files_in_batch)?;
+                files_in_batch += 1;
+                store.index_session_in_batch(&parsed)?;
+                store.mark_source_indexed(
+                    &path,
+                    file_state.source_file_mtime_ns,
+                    file_state.source_file_size,
+                    Some(&parsed.session.id),
+                    Some(&session_key),
+                )?;
+                report.sessions_indexed += 1;
+            } else {
+                ensure_open_index_batch(store, &mut files_in_batch)?;
+                files_in_batch += 1;
+                store.mark_source_indexed(
+                    &path,
+                    file_state.source_file_mtime_ns,
+                    file_state.source_file_size,
+                    None,
+                    None,
+                )?;
+                report.files_skipped += 1;
+                report.skipped_non_session += 1;
+            }
+
+            if files_in_batch >= INDEX_TRANSACTION_FILE_BATCH {
+                commit_open_index_batch(store, &mut files_in_batch)?;
+            }
+
             report.files_seen += 1;
-            report.files_skipped += 1;
-            report.skipped_unchanged += 1;
             if should_report_after_file(&report) {
                 on_progress(&report);
             }
-            continue;
         }
+        Ok(())
+    })();
 
-        on_progress(&report);
-
-        let parsed = match parse_session_file(&path) {
-            Ok(parsed) => parsed,
-            Err(error) if is_not_found_error(&error) => {
-                report.files_seen += 1;
-                report.files_skipped += 1;
-                report.skipped_missing += 1;
-                if should_report_after_file(&report) {
-                    on_progress(&report);
-                }
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-
-        if let Some(parsed) = parsed {
-            if !parsed_session_matches_filters(&parsed, filters) {
-                report.files_seen += 1;
-                report.files_skipped += 1;
-                report.skipped_filtered += 1;
-                if should_report_after_file(&report) {
-                    on_progress(&report);
-                }
-                continue;
-            }
-            let session_key =
-                build_session_key(&parsed.session.id, &parsed.session.source_file_path);
-            report.events_indexed += parsed.events.len();
-            store.index_session(&parsed)?;
-            store.mark_source_indexed(
-                &path,
-                file_state.source_file_mtime_ns,
-                file_state.source_file_size,
-                Some(&parsed.session.id),
-                Some(&session_key),
-            )?;
-            report.sessions_indexed += 1;
-        } else {
-            store.mark_source_indexed(
-                &path,
-                file_state.source_file_mtime_ns,
-                file_state.source_file_size,
-                None,
-                None,
-            )?;
-            report.files_skipped += 1;
-            report.skipped_non_session += 1;
-        }
-
-        report.files_seen += 1;
-        if should_report_after_file(&report) {
-            on_progress(&report);
-        }
+    if let Err(error) = indexing_result {
+        rollback_open_index_batch(store, files_in_batch);
+        return Err(error);
     }
+    commit_open_index_batch(store, &mut files_in_batch)?;
 
     Ok(report)
+}
+
+fn ensure_open_index_batch(store: &Store, files_in_batch: &mut usize) -> Result<()> {
+    if *files_in_batch == 0 {
+        store.begin_index_batch()?;
+    }
+    Ok(())
+}
+
+fn commit_open_index_batch(store: &Store, files_in_batch: &mut usize) -> Result<()> {
+    if *files_in_batch == 0 {
+        return Ok(());
+    }
+    match store.commit_index_batch() {
+        Ok(()) => {
+            *files_in_batch = 0;
+            Ok(())
+        }
+        Err(error) => {
+            rollback_open_index_batch(store, *files_in_batch);
+            Err(error)
+        }
+    }
+}
+
+fn rollback_open_index_batch(store: &Store, files_in_batch: usize) {
+    if files_in_batch > 0 {
+        let _ = store.rollback_index_batch();
+    }
 }
 
 fn pending_source_files_with_filters(
@@ -374,7 +420,7 @@ fn pending_source_files_with_filters(
                 continue;
             }
 
-            if filters.needs_parsed_session() {
+            if filters_need_parsed_session_for_path(filters, &path) {
                 let parsed = match parse_session_file(&path) {
                     Ok(parsed) => parsed,
                     Err(error) if is_not_found_error(&error) => continue,
@@ -502,6 +548,15 @@ fn path_may_match_since(path: &Path, filters: &IndexFilters) -> bool {
     };
     !archive_date_prefix(path).is_some_and(|prefix| prefix.is_before(since.date))
 }
+fn filters_need_parsed_session_for_path(filters: &IndexFilters, path: &Path) -> bool {
+    if filters.repo.is_some() {
+        return true;
+    }
+    let Some(since) = &filters.since else {
+        return false;
+    };
+    !archive_date_prefix(path).is_some_and(|prefix| prefix.is_after(since.date))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArchiveDatePrefix {
@@ -518,6 +573,14 @@ impl ArchiveDatePrefix {
             Self::Day(day) => day < date,
         }
     }
+
+    fn is_after(self, date: CalendarDate) -> bool {
+        match self {
+            Self::Year(year) => year > date.year,
+            Self::Month(year, month) => (year, month) > (date.year, date.month),
+            Self::Day(day) => day > date,
+        }
+    }
 }
 
 fn archive_date_prefix(path: &Path) -> Option<ArchiveDatePrefix> {
@@ -528,6 +591,10 @@ fn archive_date_prefix(path: &Path) -> Option<ArchiveDatePrefix> {
     let mut prefix = None;
 
     for index in 0..parts.len() {
+        if let Some(day) = parse_iso_date_prefix(parts[index]) {
+            prefix = Some(ArchiveDatePrefix::Day(day));
+            continue;
+        }
         let Some(year) = parse_year(parts[index]) else {
             continue;
         };
@@ -549,6 +616,20 @@ fn archive_date_prefix(path: &Path) -> Option<ArchiveDatePrefix> {
     }
 
     prefix
+}
+
+fn parse_iso_date_prefix(value: &str) -> Option<CalendarDate> {
+    if value.len() < 10 {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    if bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
+        return None;
+    }
+    let year = value.get(0..4).and_then(parse_year)?;
+    let month = value.get(5..7).and_then(parse_month)?;
+    let day = value.get(8..10).and_then(parse_day_component)?;
+    Some(CalendarDate { year, month, day })
 }
 
 fn parse_year(value: &str) -> Option<i32> {
@@ -623,7 +704,7 @@ mod tests {
 
     fn temp_root(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "codex-recall-indexer-test-{}-{}",
+            "agent-recall-indexer-test-{}-{}",
             std::process::id(),
             name
         ));
@@ -652,6 +733,16 @@ mod tests {
             Some(ArchiveDatePrefix::Day(CalendarDate {
                 year: 2026,
                 month: 4,
+                day: 13
+            }))
+        );
+        assert_eq!(
+            archive_date_prefix(Path::new(
+                "/Users/me/.omp/agent/sessions/-projects/2026-06-13T21-22-36-081Z_session.jsonl"
+            )),
+            Some(ArchiveDatePrefix::Day(CalendarDate {
+                year: 2026,
+                month: 6,
                 day: 13
             }))
         );

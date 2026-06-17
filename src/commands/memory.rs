@@ -357,7 +357,7 @@ pub fn run_related(args: RelatedArgs) -> Result<()> {
                 "session_id": session.session_id,
                 "repo": session.repo,
                 "cwd": session.cwd,
-                "resource_uri": format!("codex-recall://session/{}", session.session_key),
+                "resource_uri": format!("agent-recall://session/{}", session.session_key),
             },
             "sessions": sessions.iter().map(session_json_value).collect::<Vec<_>>(),
             "memories": memories.iter().map(|item| memory_result_json(item, false, MatchStrategy::AllTerms)).collect::<Vec<_>>(),
@@ -581,7 +581,7 @@ pub fn run_resources(args: ResourcesArgs) -> Result<()> {
 pub fn run_read_resource(args: ReadResourceArgs) -> Result<()> {
     let db_path = args.db.unwrap_or(default_db_path()?);
     let store = Store::open_readonly(&db_path)?;
-    if let Some(memory_id) = args.uri.strip_prefix("codex-recall://memory/") {
+    if let Some(memory_id) = args.uri.strip_prefix("agent-recall://memory/") {
         let Some(memory) = store.memory_by_id(memory_id)? else {
             bail!("unknown memory resource `{}`", args.uri);
         };
@@ -590,7 +590,7 @@ pub fn run_read_resource(args: ReadResourceArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
-    if let Some(session_key) = args.uri.strip_prefix("codex-recall://session/") {
+    if let Some(session_key) = args.uri.strip_prefix("agent-recall://session/") {
         let matches = store.resolve_session_reference(session_key)?;
         if matches.is_empty() {
             bail!("unknown session resource `{}`", args.uri);
@@ -662,7 +662,7 @@ fn memory_json_value(
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
         "evidence_count": memory.evidence_count,
-        "resource_uri": format!("codex-recall://memory/{}", memory.id),
+        "resource_uri": format!("agent-recall://memory/{}", memory.id),
         "evidence": evidence.iter().map(evidence_json_value).collect::<Vec<_>>(),
     });
     if include_trace {
@@ -692,7 +692,7 @@ fn memory_result_json(
         "evidence_count": memory.object.evidence_count,
         "repos": memory.repos,
         "session_keys": memory.session_keys,
-        "resource_uri": format!("codex-recall://memory/{}", memory.object.id),
+        "resource_uri": format!("agent-recall://memory/{}", memory.object.id),
     });
     if include_trace {
         value["trace"] = json!({
@@ -717,7 +717,7 @@ fn evidence_json_value(evidence: &MemoryEvidence) -> serde_json::Value {
         "source_timestamp": evidence.source_timestamp,
         "event_kind": evidence.event_kind.as_str(),
         "evidence_text": compact_whitespace(&evidence.evidence_text),
-        "resource_uri": format!("codex-recall://session/{}", evidence.session_key),
+        "resource_uri": format!("agent-recall://session/{}", evidence.session_key),
     })
 }
 
@@ -743,7 +743,7 @@ fn delta_item_json(item: &DeltaItem) -> serde_json::Value {
             "cwd": cwd,
             "session_timestamp": session_timestamp,
             "updated_at": updated_at,
-            "resource_uri": format!("codex-recall://session/{}", session_key),
+            "resource_uri": format!("agent-recall://session/{}", session_key),
         }),
         DeltaItem::Memory {
             change_id,
@@ -763,7 +763,7 @@ fn delta_item_json(item: &DeltaItem) -> serde_json::Value {
             "evidence_count": object.evidence_count,
             "repos": repos,
             "session_keys": session_keys,
-            "resource_uri": format!("codex-recall://memory/{}", object.id),
+            "resource_uri": format!("agent-recall://memory/{}", object.id),
         }),
         DeltaItem::Deleted {
             change_id,
@@ -802,6 +802,8 @@ fn session_json_value(session: &RecentSession) -> serde_json::Value {
         "repo": session.repo,
         "cwd": session.cwd,
         "session_timestamp": session.session_timestamp,
-        "resource_uri": format!("codex-recall://session/{}", session.session_key),
+        "resource_uri": format!("agent-recall://session/{}", session.session_key),
+        "source_kind": session.source_kind,
+        "source_label": session.source_label,
     })
 }

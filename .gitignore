@@ -1,5 +1,5 @@
 /target
-/.codex-recall
+/.agent-recall
 /.hermes
 .DS_Store
 *.sqlite

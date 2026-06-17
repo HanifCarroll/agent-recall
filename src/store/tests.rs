@@ -1,11 +1,11 @@
 use super::*;
-use crate::parser::{EventKind, ParsedEvent, ParsedSession, SessionMetadata};
+use crate::parser::{EventKind, ParsedEvent, ParsedSession, SessionMetadata, SourceKind};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
 fn temp_db_path(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "codex-recall-store-test-{}-{}",
+        "agent-recall-store-test-{}-{}",
         std::process::id(),
         name
     ));
@@ -32,6 +32,8 @@ fn sample_session_with(id: &str, cwd: &str, timestamp: &str, source_path: &str) 
             cwd: cwd.to_owned(),
             cli_version: Some("0.1.0".to_owned()),
             source_file_path: source.clone(),
+            source_kind: SourceKind::Codex,
+            source_label: "Codex".to_owned(),
         },
         events: vec![
             ParsedEvent {
@@ -71,6 +73,8 @@ fn memory_session_with(id: &str, cwd: &str, timestamp: &str, source_path: &str) 
             cwd: cwd.to_owned(),
             cli_version: Some("0.1.0".to_owned()),
             source_file_path: source.clone(),
+            source_kind: SourceKind::Codex,
+            source_label: "Codex".to_owned(),
         },
         events: vec![ParsedEvent {
             session_id: id.to_owned(),
@@ -115,6 +119,8 @@ fn searches_fts_with_source_provenance() {
     assert_eq!(results[0].cwd, "/Users/me/project");
     assert!(results[0].snippet.contains("webhook"));
     assert!(results[0].score < 0.0);
+    assert_eq!(results[0].source_kind, "codex");
+    assert_eq!(results[0].source_label, "Codex");
 }
 
 #[test]
@@ -442,7 +448,7 @@ fn since_today_and_yesterday_use_local_day_boundaries() {
 }
 
 #[test]
-fn unchanged_sources_with_old_content_version_are_reindexed() {
+fn unchanged_sources_with_compatible_content_version_stay_current() {
     let store = Store::open(temp_db_path("content-version")).unwrap();
     let source = PathBuf::from("/tmp/content-version.jsonl");
     store
@@ -453,11 +459,22 @@ fn unchanged_sources_with_old_content_version_are_reindexed() {
     store
         .conn
         .execute(
-            "UPDATE ingestion_state SET content_version = 0 WHERE source_file_path = ?",
-            params![source.display().to_string()],
+            "UPDATE ingestion_state SET content_version = ? WHERE source_file_path = ?",
+            params![MIN_COMPATIBLE_CONTENT_VERSION, source.display().to_string()],
         )
         .unwrap();
+    assert!(store.is_source_current(&source, 10, 100).unwrap());
 
+    store
+        .conn
+        .execute(
+            "UPDATE ingestion_state SET content_version = ? WHERE source_file_path = ?",
+            params![
+                MIN_COMPATIBLE_CONTENT_VERSION - 1,
+                source.display().to_string()
+            ],
+        )
+        .unwrap();
     assert!(!store.is_source_current(&source, 10, 100).unwrap());
 }
 
@@ -506,7 +523,7 @@ fn migrates_legacy_session_id_schema_without_losing_searchability() {
         params![
             "legacy-session",
             "2026-04-13T01:00:00Z",
-            "/Users/me/projects/codex-recall",
+            "/Users/me/projects/agent-recall",
             "",
             "0.1.0",
             source_file,
@@ -562,7 +579,7 @@ fn migrates_legacy_session_id_schema_without_losing_searchability() {
         build_session_key("legacy-session", Path::new(source_file))
     );
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].repo, "codex-recall");
+    assert_eq!(matches[0].repo, "agent-recall");
 }
 
 #[test]
@@ -592,7 +609,7 @@ fn extracts_and_consolidates_memory_objects_with_evidence() {
     let store = Store::open(temp_db_path("memory-consolidation")).unwrap();
     let mut first = sample_session_with(
         "memory-1",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T01:00:00Z",
         "/tmp/memory-1.jsonl",
     );
@@ -610,7 +627,7 @@ fn extracts_and_consolidates_memory_objects_with_evidence() {
     }];
     let mut second = sample_session_with(
         "memory-2",
-        "/Users/me/projects/codex-recall",
+        "/Users/me/projects/agent-recall",
         "2026-04-13T02:00:00Z",
         "/tmp/memory-2.jsonl",
     );

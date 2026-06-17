@@ -1,4 +1,5 @@
 use crate::indexer::IndexReport;
+use crate::log_importer::LogImportProgress;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -29,6 +30,43 @@ pub fn progress_line(report: &IndexReport, elapsed: Duration) -> String {
         report.skipped_filtered,
         report.skipped_missing,
         report.skipped_non_session,
+        format_duration(elapsed),
+        eta,
+        current
+    )
+}
+pub fn log_import_progress_line(progress: &LogImportProgress, elapsed: Duration) -> String {
+    let percent = match progress.rows_total {
+        Some(0) => 100.0,
+        Some(total) => (progress.rows_seen as f64 / total as f64) * 100.0,
+        None => 0.0,
+    };
+    let eta = progress
+        .rows_total
+        .and_then(|total| estimate_eta(elapsed, progress.rows_seen, total))
+        .map(format_duration)
+        .unwrap_or_else(|| "unknown".to_owned());
+    let current = progress
+        .current_source
+        .as_ref()
+        .map(|path| shorten_path(path, 96))
+        .unwrap_or_else(|| "-".to_owned());
+    let rows = progress
+        .rows_total
+        .map(|total| format!("{}/{} ({percent:.1}%)", progress.rows_seen, total))
+        .unwrap_or_else(|| "-".to_owned());
+
+    format!(
+        "progress: {}/{} log dbs, phase {}, rows {}, threads {}, duplicate threads {}, parsed {} sessions, indexed {} sessions/{} events, elapsed {}, eta {}, current {}",
+        progress.sources_seen,
+        progress.sources_total,
+        progress.phase.as_str(),
+        rows,
+        progress.threads_seen,
+        progress.skipped_duplicate_threads,
+        progress.sessions_parsed,
+        progress.sessions_indexed,
+        progress.events_indexed,
         format_duration(elapsed),
         eta,
         current

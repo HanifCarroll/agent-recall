@@ -51,7 +51,7 @@ pub fn extract_memories(parsed: &ParsedSession) -> Vec<ExtractedMemory> {
     let mut seen = HashSet::new();
 
     for event in &parsed.events {
-        if matches!(event.kind, EventKind::Command) {
+        if matches!(event.kind, EventKind::Command | EventKind::Tool) {
             continue;
         }
 
@@ -225,7 +225,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{ParsedEvent, SessionMetadata};
+    use crate::parser::{ParsedEvent, SessionMetadata, SourceKind};
     use std::path::PathBuf;
 
     #[test]
@@ -238,6 +238,8 @@ mod tests {
                 cwd: "/Users/me/project".to_owned(),
                 cli_version: None,
                 source_file_path: source.clone(),
+                source_kind: SourceKind::Codex,
+                source_label: "Codex".to_owned(),
             },
             events: vec![ParsedEvent {
                 session_id: "session-1".to_owned(),
