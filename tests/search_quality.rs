@@ -4,7 +4,7 @@ use std::process::Command;
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "codex-recall-quality-test-{}-{}",
+        "agent-recall-quality-test-{}-{}",
         std::process::id(),
         name
     ));
@@ -20,7 +20,7 @@ fn write_session(root: &Path, file_name: &str, contents: &str) {
 }
 
 fn run_index(source: &Path, db: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let output = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args(["index", "--db"])
         .arg(db)
         .args(["--source"])
@@ -39,7 +39,7 @@ fn quality_fixture_prioritizes_relevant_repo_membership_and_fallbacks() {
     let temp = temp_dir("ranking");
     let source = temp.join("sessions");
     let db = temp.join("index.sqlite");
-    let current_repo = temp.join("codex-recall");
+    let current_repo = temp.join("agent-recall");
     fs::create_dir_all(current_repo.join(".git")).unwrap();
 
     write_session(
@@ -63,14 +63,14 @@ fn quality_fixture_prioritizes_relevant_repo_membership_and_fallbacks() {
     write_session(
         &source,
         "split-terms.jsonl",
-        r#"{"timestamp":"2026-04-13T03:00:00Z","type":"session_meta","payload":{"id":"split-terms","timestamp":"2026-04-13T03:00:00Z","cwd":"/Users/me/projects/codex-recall","cli_version":"0.1.0"}}
+        r#"{"timestamp":"2026-04-13T03:00:00Z","type":"session_meta","payload":{"id":"split-terms","timestamp":"2026-04-13T03:00:00Z","cwd":"/Users/me/projects/agent-recall","cli_version":"0.1.0"}}
 {"timestamp":"2026-04-13T03:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"Need alpha coverage for recall quality."}}
 {"timestamp":"2026-04-13T03:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"Beta coverage lives in a separate event."}}
 "#,
     );
     run_index(&source, &db);
 
-    let ranked = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let ranked = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .current_dir(&current_repo)
         .args(["search", "dogfood ranking", "--json", "--db"])
         .arg(&db)
@@ -84,12 +84,12 @@ fn quality_fixture_prioritizes_relevant_repo_membership_and_fallbacks() {
     let json: serde_json::Value = serde_json::from_slice(&ranked.stdout).unwrap();
     assert_eq!(json["results"][0]["session_id"], "right-command-cwd");
 
-    let repo_filtered = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let repo_filtered = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "search",
             "dogfood ranking",
             "--repo",
-            "codex-recall",
+            "agent-recall",
             "--json",
             "--db",
         ])
@@ -100,12 +100,12 @@ fn quality_fixture_prioritizes_relevant_repo_membership_and_fallbacks() {
     let json: serde_json::Value = serde_json::from_slice(&repo_filtered.stdout).unwrap();
     assert_eq!(json["results"][0]["session_id"], "right-command-cwd");
 
-    let fallback = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
+    let fallback = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
         .args([
             "search",
             "alpha beta",
             "--repo",
-            "codex-recall",
+            "agent-recall",
             "--json",
             "--db",
         ])
@@ -130,7 +130,7 @@ fn golden_quality_fixture_preserves_agent_workflow_queries() {
     write_session(
         &source,
         "clap-refactor.jsonl",
-        r#"{"timestamp":"2026-04-13T01:00:00Z","type":"session_meta","payload":{"id":"clap-refactor","timestamp":"2026-04-13T01:00:00Z","cwd":"/Users/me/projects/codex-recall","cli_version":"0.1.0"}}
+        r#"{"timestamp":"2026-04-13T01:00:00Z","type":"session_meta","payload":{"id":"clap-refactor","timestamp":"2026-04-13T01:00:00Z","cwd":"/Users/me/projects/agent-recall","cli_version":"0.1.0"}}
 {"timestamp":"2026-04-13T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"Refactor the CLI parser to Clap typed commands."}}
 {"timestamp":"2026-04-13T01:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"Split commands into modules and keep cargo clippy clean."}}
 "#,
@@ -138,7 +138,7 @@ fn golden_quality_fixture_preserves_agent_workflow_queries() {
     write_session(
         &source,
         "watcher-freshness.jsonl",
-        r#"{"timestamp":"2026-04-13T02:00:00Z","type":"session_meta","payload":{"id":"watcher-freshness","timestamp":"2026-04-13T02:00:00Z","cwd":"/Users/me/projects/codex-recall","cli_version":"0.1.0"}}
+        r#"{"timestamp":"2026-04-13T02:00:00Z","type":"session_meta","payload":{"id":"watcher-freshness","timestamp":"2026-04-13T02:00:00Z","cwd":"/Users/me/projects/agent-recall","cli_version":"0.1.0"}}
 {"timestamp":"2026-04-13T02:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"Wire LaunchAgent watcher freshness status."}}
 {"timestamp":"2026-04-13T02:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"Status should say stale, fresh, watcher-not-running, or pending-live-writes."}}
 "#,
@@ -146,7 +146,7 @@ fn golden_quality_fixture_preserves_agent_workflow_queries() {
     write_session(
         &source,
         "redaction-hardening.jsonl",
-        r#"{"timestamp":"2026-04-13T03:00:00Z","type":"session_meta","payload":{"id":"redaction-hardening","timestamp":"2026-04-13T03:00:00Z","cwd":"/Users/me/projects/codex-recall","cli_version":"0.1.0"}}
+        r#"{"timestamp":"2026-04-13T03:00:00Z","type":"session_meta","payload":{"id":"redaction-hardening","timestamp":"2026-04-13T03:00:00Z","cwd":"/Users/me/projects/agent-recall","cli_version":"0.1.0"}}
 {"timestamp":"2026-04-13T03:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"Harden secret redaction fixtures for bearer tokens, private keys, and webhook secrets."}}
 {"timestamp":"2026-04-13T03:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"The redaction corpus must not leak API keys into the SQLite FTS index."}}
 "#,
@@ -167,8 +167,8 @@ fn golden_quality_fixture_preserves_agent_workflow_queries() {
             "redaction-hardening",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_codex-recall"))
-            .args(["search", query, "--repo", "codex-recall", "--json", "--db"])
+        let output = Command::new(env!("CARGO_BIN_EXE_agent-recall"))
+            .args(["search", query, "--repo", "agent-recall", "--json", "--db"])
             .arg(&db)
             .output()
             .unwrap();

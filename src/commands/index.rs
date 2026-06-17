@@ -1,5 +1,5 @@
 use crate::config::{default_db_path, default_source_roots};
-use crate::indexer::index_sources_with_progress;
+use crate::indexer::{index_sources_with_filters_and_progress, IndexFilters};
 use crate::output::progress_line;
 use crate::refresh_lock::{acquire_refresh_lock, refresh_lock_wait_timeout};
 use crate::store::Store;
@@ -15,6 +15,13 @@ pub struct IndexArgs {
     pub db: Option<PathBuf>,
     #[arg(long = "source", help = "Session archive root to scan; repeatable")]
     pub sources: Vec<PathBuf>,
+    #[arg(
+        long,
+        help = "Only index sessions whose session or command cwd matches this repo"
+    )]
+    pub repo: Option<String>,
+    #[arg(long, help = "Only index sessions at or after this date/time")]
+    pub since: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -23,17 +30,25 @@ pub struct RebuildArgs {
     pub db: Option<PathBuf>,
     #[arg(long = "source", help = "Session archive root to scan; repeatable")]
     pub sources: Vec<PathBuf>,
+    #[arg(
+        long,
+        help = "Only index sessions whose session or command cwd matches this repo"
+    )]
+    pub repo: Option<String>,
+    #[arg(long, help = "Only index sessions at or after this date/time")]
+    pub since: Option<String>,
 }
 
 pub fn run_index(args: IndexArgs) -> Result<()> {
     let db_path = args.db.unwrap_or(default_db_path()?);
     let sources = resolve_sources(args.sources)?;
+    let filters = IndexFilters::new(args.repo, args.since)?;
     let Some(_refresh_lock) = acquire_refresh_lock(&db_path, refresh_lock_wait_timeout())? else {
-        return Err(anyhow!("another codex-recall refresh is already active"));
+        return Err(anyhow!("another agent-recall refresh is already active"));
     };
     let store = Store::open(&db_path)?;
     let started = Instant::now();
-    let report = index_sources_with_progress(&store, &sources, |report| {
+    let report = index_sources_with_filters_and_progress(&store, &sources, &filters, |report| {
         eprintln!("{}", progress_line(report, started.elapsed()));
     })?;
     println!(
@@ -55,13 +70,14 @@ pub fn run_index(args: IndexArgs) -> Result<()> {
 pub fn run_rebuild(args: RebuildArgs) -> Result<()> {
     let db_path = args.db.unwrap_or(default_db_path()?);
     let sources = resolve_sources(args.sources)?;
+    let filters = IndexFilters::new(args.repo, args.since)?;
     let Some(_refresh_lock) = acquire_refresh_lock(&db_path, refresh_lock_wait_timeout())? else {
-        return Err(anyhow!("another codex-recall refresh is already active"));
+        return Err(anyhow!("another agent-recall refresh is already active"));
     };
     remove_db_files(&db_path)?;
     let store = Store::open(&db_path)?;
     let started = Instant::now();
-    let report = index_sources_with_progress(&store, &sources, |report| {
+    let report = index_sources_with_filters_and_progress(&store, &sources, &filters, |report| {
         eprintln!("{}", progress_line(report, started.elapsed()));
     })?;
     println!(

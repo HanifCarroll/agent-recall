@@ -231,7 +231,7 @@ fn print_pins(pins: &[PinRecord]) {
         println!("   cwd: {}", pin.cwd);
         println!("   source: {}", pin.source_file_path.display());
         println!(
-            "   show: codex-recall show {} --limit 120",
+            "   show: agent-recall show {} --limit 120",
             shell_quote(&pin.session_key)
         );
     }
@@ -252,7 +252,7 @@ fn print_pins_json(pins: &[PinRecord]) -> Result<()> {
                 "created_at": pin.created_at,
                 "updated_at": pin.updated_at,
                 "show_command": format!(
-                    "codex-recall show {} --limit 120",
+                    "agent-recall show {} --limit 120",
                     shell_quote(&pin.session_key)
                 ),
             })

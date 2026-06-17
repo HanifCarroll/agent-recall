@@ -8,6 +8,7 @@ pub enum KindArg {
     #[value(name = "assistant_message", alias = "assistant")]
     AssistantMessage,
     Command,
+    Tool,
 }
 
 impl KindArg {
@@ -16,6 +17,7 @@ impl KindArg {
             Self::UserMessage => "user_message",
             Self::AssistantMessage => "assistant_message",
             Self::Command => "command",
+            Self::Tool => "tool",
         }
     }
 
@@ -24,6 +26,7 @@ impl KindArg {
             Self::UserMessage => EventKind::UserMessage,
             Self::AssistantMessage => EventKind::AssistantMessage,
             Self::Command => EventKind::Command,
+            Self::Tool => EventKind::Tool,
         }
     }
 }

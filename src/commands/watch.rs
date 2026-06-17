@@ -668,11 +668,11 @@ fn stale_index_lock_message(error: &anyhow::Error, attempts: usize) -> String {
 }
 
 fn lock_retry_delays() -> Vec<Duration> {
-    let retries = std::env::var("CODEX_RECALL_WATCH_LOCK_RETRIES")
+    let retries = std::env::var("AGENT_RECALL_WATCH_LOCK_RETRIES")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(2);
-    let base_ms = std::env::var("CODEX_RECALL_WATCH_LOCK_RETRY_MS")
+    let base_ms = std::env::var("AGENT_RECALL_WATCH_LOCK_RETRY_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(250);
@@ -864,7 +864,7 @@ fn launchctl_not_loaded(output: &std::process::Output) -> bool {
 }
 
 fn launch_agent_domain() -> Result<String> {
-    if let Ok(uid) = std::env::var("CODEX_RECALL_UID") {
+    if let Ok(uid) = std::env::var("AGENT_RECALL_UID") {
         return Ok(format!("gui/{uid}"));
     }
     if let Ok(uid) = std::env::var("UID") {
@@ -885,7 +885,7 @@ fn launch_agent_domain() -> Result<String> {
 }
 
 fn launchctl_executable() -> OsString {
-    std::env::var_os("CODEX_RECALL_LAUNCHCTL").unwrap_or_else(|| OsString::from("launchctl"))
+    std::env::var_os("AGENT_RECALL_LAUNCHCTL").unwrap_or_else(|| OsString::from("launchctl"))
 }
 
 fn launch_agent_supported() -> bool {

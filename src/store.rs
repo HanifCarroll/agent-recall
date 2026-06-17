@@ -7,7 +7,11 @@ use std::collections::{hash_map::Entry, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const CONTENT_VERSION: i64 = 3;
+const CONTENT_VERSION: i64 = 4;
+// Version 4 added source labels and new transcript parsers. Existing v3 Codex
+// rows remain searchable and do not need a multi-GB reindex just to gain
+// default source labels.
+const MIN_COMPATIBLE_CONTENT_VERSION: i64 = 3;
 
 pub struct Store {
     conn: Connection,
@@ -26,6 +30,8 @@ pub struct SearchResult {
     pub session_key: String,
     pub session_id: String,
     pub repo: String,
+    pub source_kind: String,
+    pub source_label: String,
     pub kind: EventKind,
     pub text: String,
     pub snippet: String,
@@ -249,6 +255,8 @@ impl SearchOptions {
 pub struct SessionEvent {
     pub session_key: String,
     pub session_id: String,
+    pub source_kind: String,
+    pub source_label: String,
     pub kind: EventKind,
     pub text: String,
     pub cwd: String,
@@ -263,6 +271,8 @@ pub struct SessionMatch {
     pub session_id: String,
     pub cwd: String,
     pub repo: String,
+    pub source_kind: String,
+    pub source_label: String,
     pub source_file_path: PathBuf,
 }
 
@@ -271,6 +281,8 @@ pub struct RecentSession {
     pub session_key: String,
     pub session_id: String,
     pub repo: String,
+    pub source_kind: String,
+    pub source_label: String,
     pub cwd: String,
     pub session_timestamp: String,
     pub source_file_path: PathBuf,
@@ -363,6 +375,80 @@ impl Store {
                 Err(error)
             }
         }
+    }
+
+    pub fn begin_index_batch(&self) -> Result<()> {
+        self.conn.execute("BEGIN IMMEDIATE", [])?;
+        Ok(())
+    }
+
+    pub fn commit_index_batch(&self) -> Result<()> {
+        self.conn.execute("COMMIT", [])?;
+        Ok(())
+    }
+
+    pub fn rollback_index_batch(&self) -> Result<()> {
+        self.conn.execute("ROLLBACK", [])?;
+        Ok(())
+    }
+
+    pub fn index_session_in_batch(&self, parsed: &ParsedSession) -> Result<()> {
+        self.index_session_inner(parsed)
+    }
+
+    pub fn delete_sessions_for_source_kind(
+        &self,
+        source_file_path: &Path,
+        source_kind: &str,
+    ) -> Result<usize> {
+        let source_file_path = source_file_path.display().to_string();
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT session_key
+            FROM sessions
+            WHERE source_file_path = ? AND source_kind = ?
+            ORDER BY session_key ASC
+            "#,
+        )?;
+        let rows = statement.query_map(params![source_file_path.as_str(), source_kind], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let session_keys = rows
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::from)?;
+        drop(statement);
+
+        let mut affected_memory_ids = Vec::new();
+        for session_key in &session_keys {
+            affected_memory_ids.extend(self.memory_ids_for_session(session_key)?);
+            self.conn.execute(
+                "DELETE FROM events_fts WHERE session_key = ?",
+                params![session_key],
+            )?;
+            self.conn.execute(
+                "DELETE FROM memory_evidence WHERE session_key = ?",
+                params![session_key],
+            )?;
+            self.conn.execute(
+                "DELETE FROM events WHERE session_key = ?",
+                params![session_key],
+            )?;
+            self.conn.execute(
+                "DELETE FROM session_repos WHERE session_key = ?",
+                params![session_key],
+            )?;
+            self.conn.execute(
+                "DELETE FROM sessions WHERE session_key = ?",
+                params![session_key],
+            )?;
+            self.record_change("session", session_key, "delete")?;
+        }
+
+        affected_memory_ids.sort();
+        affected_memory_ids.dedup();
+        self.refresh_memory_objects(&affected_memory_ids)?;
+
+        Ok(session_keys.len())
     }
 
     pub fn stats(&self) -> Result<Stats> {
@@ -559,6 +645,8 @@ impl Store {
                 events.session_key,
                 events.session_id,
                 sessions.repo,
+                sessions.source_kind,
+                sessions.source_label,
                 events.kind,
                 events.text,
                 snippet(events_fts, 4, '', '', ' ... ', 16) AS snippet,
@@ -620,33 +708,35 @@ impl Store {
         let mut statement = self.conn.prepare(&sql)?;
 
         let rows = statement.query_map(params_from_iter(query_params.iter()), |row| {
-            let kind_text: String = row.get(3)?;
+            let kind_text: String = row.get(5)?;
             let kind = kind_text.parse::<EventKind>().map_err(|_| {
                 rusqlite::Error::InvalidColumnType(
-                    3,
+                    5,
                     "kind".to_owned(),
                     rusqlite::types::Type::Text,
                 )
             })?;
-            let source_file_path: String = row.get(9)?;
-            let source_line_number: i64 = row.get(10)?;
+            let source_file_path: String = row.get(11)?;
+            let source_line_number: i64 = row.get(12)?;
 
             Ok(SearchResult {
                 session_key: row.get(0)?,
                 session_id: row.get(1)?,
                 repo: row.get(2)?,
+                source_kind: row.get(3)?,
+                source_label: row.get(4)?,
                 kind,
-                text: row.get(4)?,
-                snippet: row.get(5)?,
-                score: row.get(6)?,
-                session_timestamp: row.get(7)?,
-                cwd: row.get(8)?,
+                text: row.get(6)?,
+                snippet: row.get(7)?,
+                score: row.get(8)?,
+                session_timestamp: row.get(9)?,
+                cwd: row.get(10)?,
                 source_file_path: PathBuf::from(source_file_path),
                 source_line_number: source_line_number as usize,
-                source_timestamp: row.get(11)?,
+                source_timestamp: row.get(13)?,
                 session_hit_count: 0,
                 best_kind_weight: 0,
-                repo_matches_current: row.get::<_, i64>(12)? != 0,
+                repo_matches_current: row.get::<_, i64>(14)? != 0,
             })
         })?;
 
@@ -657,19 +747,21 @@ impl Store {
     pub fn resolve_session_reference(&self, reference: &str) -> Result<Vec<SessionMatch>> {
         let mut statement = self.conn.prepare(
             r#"
-            SELECT session_key, session_id, cwd, repo, source_file_path
+            SELECT session_key, session_id, cwd, repo, source_kind, source_label, source_file_path
             FROM sessions
             WHERE session_key = ? OR session_id = ?
             ORDER BY session_timestamp DESC, source_file_path ASC
             "#,
         )?;
         let rows = statement.query_map(params![reference, reference], |row| {
-            let source_file_path: String = row.get(4)?;
+            let source_file_path: String = row.get(6)?;
             Ok(SessionMatch {
                 session_key: row.get(0)?,
                 session_id: row.get(1)?,
                 cwd: row.get(2)?,
                 repo: row.get(3)?,
+                source_kind: row.get(4)?,
+                source_label: row.get(5)?,
                 source_file_path: PathBuf::from(source_file_path),
             })
         })?;
@@ -691,6 +783,8 @@ impl Store {
                 sessions.session_key,
                 sessions.session_id,
                 sessions.repo,
+                sessions.source_kind,
+                sessions.source_label,
                 sessions.cwd,
                 sessions.session_timestamp,
                 sessions.source_file_path
@@ -748,13 +842,15 @@ impl Store {
 
         let mut statement = self.conn.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(query_params.iter()), |row| {
-            let source_file_path: String = row.get(5)?;
+            let source_file_path: String = row.get(7)?;
             Ok(RecentSession {
                 session_key: row.get(0)?,
                 session_id: row.get(1)?,
                 repo: row.get(2)?,
-                cwd: row.get(3)?,
-                session_timestamp: row.get(4)?,
+                source_kind: row.get(3)?,
+                source_label: row.get(4)?,
+                cwd: row.get(5)?,
+                session_timestamp: row.get(6)?,
                 source_file_path: PathBuf::from(source_file_path),
             })
         })?;
@@ -783,6 +879,8 @@ impl Store {
             SELECT
                 events.session_key,
                 events.session_id,
+                sessions.source_kind,
+                sessions.source_label,
                 events.kind,
                 events.text,
                 sessions.cwd,
@@ -806,26 +904,28 @@ impl Store {
         let mut statement = self.conn.prepare(&sql)?;
 
         let rows = statement.query_map(params_from_iter(query_params.iter()), |row| {
-            let kind_text: String = row.get(2)?;
+            let kind_text: String = row.get(4)?;
             let kind = kind_text.parse::<EventKind>().map_err(|_| {
                 rusqlite::Error::InvalidColumnType(
-                    2,
+                    4,
                     "kind".to_owned(),
                     rusqlite::types::Type::Text,
                 )
             })?;
-            let source_file_path: String = row.get(5)?;
-            let source_line_number: i64 = row.get(6)?;
+            let source_file_path: String = row.get(7)?;
+            let source_line_number: i64 = row.get(8)?;
 
             Ok(SessionEvent {
                 session_key: row.get(0)?,
                 session_id: row.get(1)?,
+                source_kind: row.get(2)?,
+                source_label: row.get(3)?,
                 kind,
-                text: row.get(3)?,
-                cwd: row.get(4)?,
+                text: row.get(5)?,
+                cwd: row.get(6)?,
                 source_file_path: PathBuf::from(source_file_path),
                 source_line_number: source_line_number as usize,
-                source_timestamp: row.get(7)?,
+                source_timestamp: row.get(9)?,
             })
         })?;
 
@@ -1042,6 +1142,8 @@ impl Store {
                 sessions.session_key,
                 sessions.session_id,
                 sessions.repo,
+                sessions.source_kind,
+                sessions.source_label,
                 sessions.cwd,
                 sessions.session_timestamp,
                 sessions.source_file_path
@@ -1060,13 +1162,15 @@ impl Store {
         let rows = statement.query_map(
             params![session_key, session_key, limit.to_string()],
             |row| {
-                let source_file_path: String = row.get(5)?;
+                let source_file_path: String = row.get(7)?;
                 Ok(RecentSession {
                     session_key: row.get(0)?,
                     session_id: row.get(1)?,
                     repo: row.get(2)?,
-                    cwd: row.get(3)?,
-                    session_timestamp: row.get(4)?,
+                    source_kind: row.get(3)?,
+                    source_label: row.get(4)?,
+                    cwd: row.get(5)?,
+                    session_timestamp: row.get(6)?,
                     source_file_path: PathBuf::from(source_file_path),
                 })
             },
@@ -1086,6 +1190,8 @@ impl Store {
                 sessions.session_key,
                 sessions.session_id,
                 sessions.repo,
+                sessions.source_kind,
+                sessions.source_label,
                 sessions.cwd,
                 sessions.session_timestamp,
                 sessions.source_file_path
@@ -1099,13 +1205,15 @@ impl Store {
             "#,
         )?;
         let rows = statement.query_map(params![memory_id, limit.to_string()], |row| {
-            let source_file_path: String = row.get(5)?;
+            let source_file_path: String = row.get(7)?;
             Ok(RecentSession {
                 session_key: row.get(0)?,
                 session_id: row.get(1)?,
                 repo: row.get(2)?,
-                cwd: row.get(3)?,
-                session_timestamp: row.get(4)?,
+                source_kind: row.get(3)?,
+                source_label: row.get(4)?,
+                cwd: row.get(5)?,
+                session_timestamp: row.get(6)?,
                 source_file_path: PathBuf::from(source_file_path),
             })
         })?;
@@ -1142,7 +1250,7 @@ impl Store {
         Ok(sessions
             .into_iter()
             .map(|session| ResourceRecord {
-                uri: format!("codex-recall://session/{}", session.session_key),
+                uri: format!("agent-recall://session/{}", session.session_key),
                 name: format!("session {}", session.session_id),
                 description: format!("{} {}", session.repo, session.cwd),
                 mime_type: "application/json".to_owned(),
@@ -1160,7 +1268,7 @@ impl Store {
         Ok(memories
             .into_iter()
             .map(|memory| ResourceRecord {
-                uri: format!("codex-recall://memory/{}", memory.object.id),
+                uri: format!("agent-recall://memory/{}", memory.object.id),
                 name: format!("{} {}", memory.object.kind.as_str(), memory.object.id),
                 description: memory.object.summary,
                 mime_type: "application/json".to_owned(),
@@ -1539,13 +1647,13 @@ impl Store {
             WHERE source_file_path = ?
               AND source_file_mtime_ns = ?
               AND source_file_size = ?
-              AND content_version = ?
+              AND content_version >= ?
             "#,
             params![
                 source_file_path.display().to_string(),
                 source_file_mtime_ns,
                 source_file_size,
-                CONTENT_VERSION,
+                MIN_COMPATIBLE_CONTENT_VERSION,
             ],
             |row| row.get::<_, i64>(0),
         )?;
@@ -1607,6 +1715,7 @@ impl Store {
 
         self.create_schema_objects()?;
         self.ensure_sessions_indexed_at_column()?;
+        self.ensure_sessions_source_columns()?;
         self.ensure_ingestion_state_session_key_column()?;
         self.ensure_ingestion_state_content_version_column()?;
         self.backfill_session_repos()?;
@@ -1624,6 +1733,8 @@ impl Store {
                 session_timestamp TEXT NOT NULL,
                 cwd TEXT NOT NULL,
                 repo TEXT NOT NULL DEFAULT '',
+                source_kind TEXT NOT NULL DEFAULT 'codex',
+                source_label TEXT NOT NULL DEFAULT 'Codex',
                 cli_version TEXT,
                 source_file_path TEXT NOT NULL,
                 indexed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -1676,7 +1787,7 @@ impl Store {
                 source_file_size INTEGER NOT NULL,
                 session_id TEXT,
                 session_key TEXT,
-                content_version INTEGER NOT NULL DEFAULT 3,
+                content_version INTEGER NOT NULL DEFAULT 4,
                 indexed_at TEXT NOT NULL
             );
 
@@ -1742,13 +1853,16 @@ impl Store {
         self.conn.execute(
             r#"
             INSERT INTO sessions (
-                session_key, session_id, session_timestamp, cwd, repo, cli_version, source_file_path, indexed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                session_key, session_id, session_timestamp, cwd, repo, source_kind, source_label,
+                cli_version, source_file_path, indexed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
             ON CONFLICT(session_key) DO UPDATE SET
                 session_id = excluded.session_id,
                 session_timestamp = excluded.session_timestamp,
                 cwd = excluded.cwd,
                 repo = excluded.repo,
+                source_kind = excluded.source_kind,
+                source_label = excluded.source_label,
                 cli_version = excluded.cli_version,
                 source_file_path = excluded.source_file_path,
                 indexed_at = excluded.indexed_at
@@ -1759,6 +1873,8 @@ impl Store {
                 parsed.session.timestamp,
                 parsed.session.cwd,
                 repo,
+                parsed.session.source_kind.as_str(),
+                parsed.session.source_label,
                 parsed.session.cli_version,
                 parsed.session.source_file_path.display().to_string(),
             ],
@@ -1929,6 +2045,30 @@ impl Store {
         }
     }
 
+    fn ensure_sessions_source_columns(&self) -> Result<()> {
+        if !self.table_has_column("sessions", "source_kind")? {
+            match self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'codex'",
+                [],
+            ) {
+                Ok(_) => {}
+                Err(error) if error.to_string().contains("duplicate column name") => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if !self.table_has_column("sessions", "source_label")? {
+            match self.conn.execute(
+                "ALTER TABLE sessions ADD COLUMN source_label TEXT NOT NULL DEFAULT 'Codex'",
+                [],
+            ) {
+                Ok(_) => {}
+                Err(error) if error.to_string().contains("duplicate column name") => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
     fn ensure_ingestion_state_content_version_column(&self) -> Result<()> {
         if self.table_has_column("ingestion_state", "content_version")? {
             return Ok(());
@@ -2038,8 +2178,9 @@ impl Store {
                 self.conn.execute(
                     r#"
                     INSERT INTO sessions (
-                        session_key, session_id, session_timestamp, cwd, repo, cli_version, source_file_path, indexed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                        session_key, session_id, session_timestamp, cwd, repo, source_kind, source_label,
+                        cli_version, source_file_path, indexed_at
+                    ) VALUES (?, ?, ?, ?, ?, 'codex', 'Codex', ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                     "#,
                     params![
                         session_key,
@@ -2174,6 +2315,9 @@ fn configure_write_connection(conn: &Connection) -> Result<()> {
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
         PRAGMA temp_store = MEMORY;
+        PRAGMA cache_size = -65536;
+        PRAGMA mmap_size = 268435456;
+        PRAGMA wal_autocheckpoint = 10000;
         "#,
     )?;
     Ok(())
@@ -2191,7 +2335,7 @@ fn configure_read_connection(conn: &Connection) -> Result<()> {
 }
 
 fn sqlite_busy_timeout() -> Duration {
-    std::env::var("CODEX_RECALL_SQLITE_BUSY_TIMEOUT_MS")
+    std::env::var("AGENT_RECALL_SQLITE_BUSY_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_millis)
@@ -2455,6 +2599,15 @@ struct SessionGroup {
     best_kind_weight: u8,
     session_timestamp: String,
     results: Vec<SearchResult>,
+    source_kind: String,
+}
+
+fn source_kind_weight(source_kind: &str) -> u8 {
+    if source_kind == "codex-log" {
+        1
+    } else {
+        0
+    }
 }
 
 fn rank_search_results(
@@ -2480,6 +2633,7 @@ fn rank_search_results(
                 session_key: result.session_key.clone(),
                 session_id: result.session_id.clone(),
                 source_file_path: result.source_file_path.clone(),
+                source_kind: result.source_kind.clone(),
                 repo_matches_current: result.repo_matches_current,
                 hit_count: 1,
                 best_score: result.score,
@@ -2498,6 +2652,9 @@ fn rank_search_results(
         right
             .repo_matches_current
             .cmp(&left.repo_matches_current)
+            .then_with(|| {
+                source_kind_weight(&left.source_kind).cmp(&source_kind_weight(&right.source_kind))
+            })
             .then_with(|| right.hit_count.cmp(&left.hit_count))
             .then_with(|| left.best_kind_weight.cmp(&right.best_kind_weight))
             .then_with(|| {
@@ -2535,7 +2692,8 @@ fn rank_search_results(
 fn dedupe_session_groups(groups: Vec<SessionGroup>) -> Vec<SessionGroup> {
     let mut selected = HashMap::<String, SessionGroup>::new();
     for group in groups {
-        match selected.entry(group.session_id.clone()) {
+        let dedupe_key = format!("{}\u{1f}{}", group.source_kind, group.session_id);
+        match selected.entry(dedupe_key) {
             Entry::Occupied(mut entry) => {
                 if is_preferred_group(&group, entry.get()) {
                     entry.insert(group);
@@ -2568,7 +2726,8 @@ fn is_preferred_group(candidate: &SessionGroup, current: &SessionGroup) -> bool 
 fn dedupe_recent_sessions(sessions: Vec<RecentSession>) -> Vec<RecentSession> {
     let mut selected = HashMap::<String, RecentSession>::new();
     for session in sessions {
-        match selected.entry(session.session_id.clone()) {
+        let dedupe_key = format!("{}\u{1f}{}", session.source_kind, session.session_id);
+        match selected.entry(dedupe_key) {
             Entry::Occupied(mut entry) => {
                 if is_preferred_recent_session(&session, entry.get()) {
                     entry.insert(session);
@@ -2579,7 +2738,6 @@ fn dedupe_recent_sessions(sessions: Vec<RecentSession>) -> Vec<RecentSession> {
             }
         }
     }
-
     let mut sessions = selected.into_values().collect::<Vec<_>>();
     sessions.sort_by(|left, right| {
         right
@@ -2608,6 +2766,12 @@ fn is_preferred_recent_session(candidate: &RecentSession, current: &RecentSessio
 fn source_priority(path: &Path) -> u8 {
     if path
         .components()
+        .any(|component| component.as_os_str() == "archived_logs")
+    {
+        return 3;
+    }
+    if path
+        .components()
         .any(|component| component.as_os_str() == "archived_sessions")
     {
         return 2;
@@ -2630,6 +2794,7 @@ fn event_kind_weight(kind: EventKind) -> u8 {
         EventKind::UserMessage => 0,
         EventKind::AssistantMessage => 1,
         EventKind::Command => 2,
+        EventKind::Tool => 3,
     }
 }
 

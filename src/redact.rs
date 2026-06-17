@@ -1,5 +1,5 @@
 use regex::Regex;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 const REDACTED: &str = "[REDACTED]";
 
@@ -69,50 +69,55 @@ fn has_secret_indicator(text: &str) -> bool {
     .any(|needle| text.contains(needle))
 }
 
+static ENV_ASSIGNMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API_KEY|ACCESS_KEY|PRIVATE_KEY|DSN|COOKIE|AUTHORIZATION)[A-Z0-9_]*)\s*=\s*([^\s"']+)"#,
+    )
+    .expect("env assignment redaction regex compiles")
+});
+
 fn env_assignment_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(
-            r#"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API_KEY|ACCESS_KEY|PRIVATE_KEY|DSN|COOKIE|AUTHORIZATION)[A-Z0-9_]*)\s*=\s*([^\s"']+)"#,
-        )
-        .expect("env assignment redaction regex compiles")
-    })
+    &ENV_ASSIGNMENT_REGEX
 }
+
+static KEY_VALUE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)(["']?(?:token|secret|password|api[_-]?key|access[_-]?key|private[_-]?key|dsn|cookie)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,}]+)"#,
+    )
+    .expect("key-value redaction regex compiles")
+});
 
 fn key_value_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(
-            r#"(?i)(["']?(?:token|secret|password|api[_-]?key|access[_-]?key|private[_-]?key|dsn|cookie)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,}]+)"#,
-        )
-        .expect("key-value redaction regex compiles")
-    })
+    &KEY_VALUE_REGEX
 }
+
+static BEARER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/=-]{12,}"#)
+        .expect("bearer redaction regex compiles")
+});
 
 fn bearer_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r#"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/=-]{12,}"#)
-            .expect("bearer redaction regex compiles")
-    })
+    &BEARER_REGEX
 }
+
+static TOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"\b(?:sk-[A-Za-z0-9_-]{16,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})\b"#,
+    )
+    .expect("token redaction regex compiles")
+});
 
 fn token_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(
-            r#"\b(?:sk-[A-Za-z0-9_-]{16,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})\b"#,
-        )
-        .expect("token redaction regex compiles")
-    })
+    &TOKEN_REGEX
 }
 
+static PRIVATE_KEY_BLOCK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"#)
+        .expect("private key block redaction regex compiles")
+});
+
 fn private_key_block_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r#"(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"#)
-            .expect("private key block redaction regex compiles")
-    })
+    &PRIVATE_KEY_BLOCK_REGEX
 }
 
 #[cfg(test)]

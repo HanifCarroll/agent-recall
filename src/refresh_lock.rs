@@ -34,7 +34,7 @@ pub(crate) fn refresh_lock_path(db_path: &Path) -> PathBuf {
 
 pub(crate) fn refresh_lock_wait_timeout() -> Duration {
     env_duration_ms(
-        "CODEX_RECALL_REFRESH_LOCK_WAIT_MS",
+        "AGENT_RECALL_REFRESH_LOCK_WAIT_MS",
         Duration::from_secs(120),
     )
 }
@@ -171,7 +171,7 @@ fn lock_owner_alive(pid: u32) -> Option<bool> {
 
 fn refresh_lock_stale_timeout() -> Duration {
     env_duration_ms(
-        "CODEX_RECALL_REFRESH_LOCK_STALE_MS",
+        "AGENT_RECALL_REFRESH_LOCK_STALE_MS",
         Duration::from_secs(15 * 60),
     )
 }
